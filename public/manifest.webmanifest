@@ -1,0 +1,19 @@
+{
+  "id": "./",
+  "name": "WorkGrid",
+  "short_name": "WorkGrid",
+  "description": "用工作方块快速梳理工作内容与时间",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f3f5f7",
+  "theme_color": "#20262b",
+  "orientation": "any",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    { "src": "workgrid-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "workgrid-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "workgrid-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -1,11 +1,11 @@
 {
   "name": "workgrid",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build --base=/workgrid/",
     "preview": "vite preview",
     "test": "node --experimental-strip-types backup.test.mjs"
   },

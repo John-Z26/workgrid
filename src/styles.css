@@ -53,6 +53,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, [role="button"]
 .icon-button.is-active { color: var(--text); background: var(--surface-subtle); }
 .today-button { height: 34px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
 .today-button:hover { background: var(--surface-subtle); }
+.install-button { height: 34px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; color: var(--text); border: 1px solid var(--line); border-radius: 6px; background: var(--surface); font-size: 12px; }
+.install-button:hover { background: var(--surface-subtle); }
+.install-button svg { color: var(--muted); }
 
 .workspace { min-height: calc(100vh - 60px); display: grid; grid-template-columns: 270px minmax(0, 1fr); }
 .task-panel { min-width: 0; padding: 18px 15px; background: var(--surface); border-right: 1px solid var(--line); }
@@ -338,6 +341,7 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
 
 @media (max-width: 520px) {
   .brand span:last-child { display: none; }
+  .install-button span { display: none; }
   .calendar-heading { align-items: flex-start; }
   .calendar-heading h2 { font-size: 17px; }
   .work-total { margin-top: 3px; }

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="WorkGrid">
+  <rect width="512" height="512" rx="104" fill="#20262b"/>
+  <rect x="106" y="106" width="132" height="132" rx="24" fill="#5c91cc"/>
+  <rect x="274" y="106" width="132" height="132" rx="24" fill="#e6934e"/>
+  <rect x="106" y="274" width="132" height="132" rx="24" fill="#5eae72"/>
+  <rect x="274" y="274" width="132" height="132" rx="24" fill="#ffffff"/>
+  <path d="M310 340l25 25 43-54" fill="none" stroke="#20262b" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
