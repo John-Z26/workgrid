@@ -1,13 +1,14 @@
 {
   "name": "workgrid",
   "private": true,
-  "version": "0.5.1",
+  "version": "0.5.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build --base=/workgrid/",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types backup.test.mjs && node --experimental-strip-types regression.test.mjs"
+    "test": "node --experimental-strip-types backup.test.mjs && node --experimental-strip-types regression.test.mjs",
+    "test:ui": "playwright test"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -19,6 +20,7 @@
     "vite": "latest"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "typescript": "latest"

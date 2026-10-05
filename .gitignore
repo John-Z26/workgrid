@@ -1,6 +1,10 @@
 node_modules/
 dist/
 .npm-cache/
+test-results/
+playwright-report/
+.vite-test-cache/
+.playwright-browsers/
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts

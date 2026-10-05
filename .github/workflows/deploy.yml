@@ -30,8 +30,14 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Build
+      - name: Run logic regression tests
+        run: npm test
+      - name: Build production site
         run: npm run build
+      - name: Install browser for UI regression tests
+        run: npx playwright install --with-deps chromium
+      - name: Run desktop and mobile UI regression tests
+        run: npm run test:ui
       - name: Set up Pages
         uses: actions/configure-pages@v5
       - name: Upload site

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { DndContext, DragOverlay, MouseSensor, TouchSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core'
+import { DndContext, DragOverlay, MouseSensor, TouchSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from '@dnd-kit/core'
 import { Bell, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, Circle, Clock3, GripVertical, ListChecks, Pause, Pencil, Play, Plus, RotateCcw, Trash2, X } from 'lucide-react'
 import { addMinutes, format, isBefore, isSameDay, startOfDay } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
@@ -112,9 +112,13 @@ function TimeSlot({ slot, onClick }: { slot: Date; onClick: () => void }) {
   return <div className="drop-slot" role="button" tabIndex={0} aria-label={`${format(slot, 'M 月 d 日 HH:mm')} 时间格`} onClick={onClick} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onClick() }} />
 }
 
-function DroppableDayTrack({ day, children }: { day: Date; children: React.ReactNode }) {
+interface DragGuide { day: string; slot: Date; top: number }
+
+function DroppableDayTrack({ day, guide, children }: { day: Date; guide: DragGuide | null; children: React.ReactNode }) {
   const { setNodeRef, isOver } = useDroppable({ id: `day:${day.toISOString()}`, data: { type: 'day', day: day.toISOString() } })
-  return <div ref={setNodeRef} className={`day-track${isOver ? ' is-over' : ''}`}>{children}</div>
+  const visibleGuide = guide?.day === day.toISOString() ? guide : null
+  const guideTime = visibleGuide ? format(visibleGuide.slot, 'HH:mm') : null
+  return <div ref={setNodeRef} className={`day-track${isOver ? ' is-over' : ''}`}>{children}{visibleGuide && <div className="drag-time-guide" style={{ top: visibleGuide.top }} data-time={guideTime} aria-hidden="true"><span>{guideTime}</span></div>}</div>
 }
 
 function CalendarEvent({ item, duration, batchMode, batchSelected, onOpen, onToggleBatch, onStatus, onResize }: {
@@ -172,6 +176,7 @@ function App() {
   const [canUndoImport, setCanUndoImport] = useState(() => loadImportRecovery() !== null)
   const [batchMode, setBatchMode] = useState(false)
   const [batchSelection, setBatchSelection] = useState<Set<string>>(new Set())
+  const [dragGuide, setDragGuide] = useState<DragGuide | null>(null)
   const calendarScrollRef = useRef<HTMLDivElement>(null)
   const deliveredReminderKeys = useRef<Set<string>>(new Set())
   const sensors = useSensors(useSensor(MouseSensor, { activationConstraint: { distance: 4 } }), useSensor(TouchSensor, { activationConstraint: { distance: 4 } }))
@@ -267,21 +272,33 @@ function App() {
   }
   function handleDragStart(event: DragStartEvent) {
     const id = String(event.active.id)
+    setDragGuide(null)
     if (id.startsWith('task:')) setDraggingTaskId(id.slice(5))
+  }
+  function dragSlotFromEvent(event: DragMoveEvent | DragEndEvent) {
+    const target = event.over?.data.current as { type?: string; day?: string } | undefined
+    if (target?.type !== 'day' || !target.day || !event.over) return null
+    const initialY = dragStartY(event.activatorEvent)
+    if (initialY === null) return null
+    return { day: target.day, slot: dropDateFromPosition(new Date(target.day), initialY + event.delta.y, event.over.rect.top, SLOT_HEIGHT, SLOT_MINUTES) }
+  }
+  function handleDragMove(event: DragMoveEvent) {
+    const result = dragSlotFromEvent(event)
+    if (!result) { setDragGuide(null); return }
+    const minutes = result.slot.getHours() * 60 + result.slot.getMinutes()
+    setDragGuide({ ...result, top: (minutes / SLOT_MINUTES) * SLOT_HEIGHT })
   }
   function handleDragEnd(event: DragEndEvent) {
     const taskId = String(event.active.id).replace(/^task:/, '')
     const target = event.over?.data.current as { type?: string; slot?: string; day?: string } | undefined
     setDraggingTaskId(null)
+    setDragGuide(null)
     if (!event.over || !target) return
     if (target.type === 'backlog') unscheduleTask(taskId)
     if (target.type === 'slot' && target.slot) scheduleTask(taskId, new Date(target.slot))
     if (target.type === 'day' && target.day) {
-      const initialY = dragStartY(event.activatorEvent)
-      if (initialY === null) return
-      const pointerY = initialY + event.delta.y
-      const slot = dropDateFromPosition(new Date(target.day), pointerY, event.over.rect.top, SLOT_HEIGHT, SLOT_MINUTES)
-      scheduleTask(taskId, slot)
+      const result = dragSlotFromEvent(event)
+      if (result) scheduleTask(taskId, result.slot)
     }
   }
   function beginEdit(task: Task) {
@@ -367,7 +384,7 @@ function App() {
       <div className="time-rail">{Array.from({ length: WORK_END - WORK_START + 1 }, (_, index) => <span key={index} style={{ top: index * SLOT_HEIGHT * 4 }}>{String(WORK_START + index).padStart(2, '0')}:00</span>)}</div>
       {days.map((day) => {
         const layout = layoutDayTasks(tasks.filter((task) => task.start && isSameDay(new Date(task.start), day)), resizePreview)
-        return <DroppableDayTrack day={day} key={day.toISOString()}><div className="drop-slots">{slots.map((slotIndex) => { const slot = new Date(day); slot.setHours(WORK_START, slotIndex * SLOT_MINUTES, 0, 0); return <TimeSlot key={slotIndex} slot={slot} onClick={() => selectedTaskId && scheduleTask(selectedTaskId, slot)} /> })}</div><div className="event-layer">{layout.map((item) => <CalendarEvent key={item.task.id} item={item} duration={resizePreview?.id === item.task.id ? resizePreview.duration : item.task.duration} batchMode={batchMode} batchSelected={batchSelection.has(item.task.id)} onOpen={() => beginEdit(item.task)} onToggleBatch={() => toggleBatchTask(item.task.id)} onStatus={(status) => updateStatus(item.task.id, status)} onResize={(event) => startResize(event, item.task)} />)}</div></DroppableDayTrack>
+        return <DroppableDayTrack day={day} guide={dragGuide} key={day.toISOString()}><div className="drop-slots">{slots.map((slotIndex) => { const slot = new Date(day); slot.setHours(WORK_START, slotIndex * SLOT_MINUTES, 0, 0); return <TimeSlot key={slotIndex} slot={slot} onClick={() => selectedTaskId && scheduleTask(selectedTaskId, slot)} /> })}</div><div className="event-layer">{layout.map((item) => <CalendarEvent key={item.task.id} item={item} duration={resizePreview?.id === item.task.id ? resizePreview.duration : item.task.duration} batchMode={batchMode} batchSelected={batchSelection.has(item.task.id)} onOpen={() => beginEdit(item.task)} onToggleBatch={() => toggleBatchTask(item.task.id)} onStatus={(status) => updateStatus(item.task.id, status)} onResize={(event) => startResize(event, item.task)} />)}</div></DroppableDayTrack>
       })}
     </div>
   }
@@ -391,7 +408,7 @@ function App() {
   }
 
   const totalMinutes = visibleTasks.reduce((sum, task) => sum + task.duration, 0)
-  return <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={() => setDraggingTaskId(null)}>
+  return <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragStart={handleDragStart} onDragMove={handleDragMove} onDragEnd={handleDragEnd} onDragCancel={() => { setDraggingTaskId(null); setDragGuide(null) }}>
     <div className="app-shell">
       <header className="topbar"><div className="brand"><span className="brand-mark"><CalendarDays size={18} /></span><span>WorkGrid</span></div><div className="view-switcher" role="group" aria-label="日历视图">{(Object.keys(VIEW_LABELS) as ViewMode[]).map((mode) => <button key={mode} type="button" className={view === mode ? 'is-active' : ''} onClick={() => selectView(mode)}>{VIEW_LABELS[mode]}</button>)}</div><div className="date-controls"><InstallApp /><DataManagement tasks={tasks} canUndoImport={canUndoImport} onImport={importTasks} onUndoImport={undoLastImport} onNotify={notify} /><span className="toolbar-divider" />{view !== 'today' && <><button className="icon-button" type="button" aria-label="上一周期" title="上一周期" onClick={() => setAnchor((date) => moveAnchor(date, view, -1))}><ChevronLeft size={18} /></button><button className="today-button" type="button" onClick={() => setAnchor(new Date())}>今天</button><button className="icon-button" type="button" aria-label="下一周期" title="下一周期" onClick={() => setAnchor((date) => moveAnchor(date, view, 1))}><ChevronRight size={18} /></button></>}</div></header>
       <div className="workspace">
