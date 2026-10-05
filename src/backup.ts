@@ -3,7 +3,7 @@ import type { Task, TaskColor, WorkGridBackup } from './types'
 export const BACKUP_FORMAT = 'workgrid-backup'
 export const BACKUP_SCHEMA_VERSION = 4
 export const MAX_BACKUP_BYTES = 5 * 1024 * 1024
-export const APP_VERSION = '0.5.1'
+export const APP_VERSION = '0.6.0'
 
 const COLORS: TaskColor[] = ['red', 'orange', 'yellow', 'green', 'blue', 'indigo', 'purple']
 
@@ -103,6 +103,17 @@ function validateTask(value: unknown, index: number): Task {
   }
 }
 
+export function validateTaskList(value: unknown): Task[] {
+  if (!Array.isArray(value)) throw new BackupError('工作方块列表格式不正确')
+  const tasks = value.map(validateTask)
+  const ids = new Set<string>()
+  for (const task of tasks) {
+    if (ids.has(task.id)) throw new BackupError('工作方块列表中包含重复编号')
+    ids.add(task.id)
+  }
+  return tasks
+}
+
 export function createBackup(tasks: Task[]): WorkGridBackup {
   return {
     format: BACKUP_FORMAT,
@@ -159,12 +170,7 @@ export function parseBackupText(text: string): WorkGridBackup {
     throw new BackupError('备份数量与实际内容不一致，文件可能不完整')
   }
 
-  const tasks = value.tasks.map(validateTask)
-  const ids = new Set<string>()
-  for (const task of tasks) {
-    if (ids.has(task.id)) throw new BackupError('备份中包含重复编号，未导入任何数据')
-    ids.add(task.id)
-  }
+  const tasks = validateTaskList(value.tasks)
 
   return {
     format: BACKUP_FORMAT,

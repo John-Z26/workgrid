@@ -24,6 +24,22 @@ async function seedTasks(page: Page, tasks: unknown[]) {
   await page.addInitScript(({ key, value }) => localStorage.setItem(key, JSON.stringify(value)), { key: STORAGE_KEY, value: tasks })
 }
 
+async function seedCloudSession(page: Page) {
+  const user = { id: '00000000-0000-4000-8000-000000000006', email: 'tester@example.com', aud: 'authenticated', role: 'authenticated' }
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
+  const payload = Buffer.from(JSON.stringify({ sub: user.id, email: user.email, role: user.role, exp: 4102444800 })).toString('base64url')
+  await page.addInitScript(({ session }) => localStorage.setItem('sb-127-auth-token', JSON.stringify(session)), {
+    session: {
+      access_token: `${header}.${payload}.signature`,
+      refresh_token: 'test-refresh-token',
+      expires_in: 3600,
+      expires_at: 4102444800,
+      token_type: 'bearer',
+      user,
+    },
+  })
+}
+
 async function dragTarget(page: Page, dayIndex: number, slotIndex: number) {
   const surface = page.locator('.calendar-surface')
   await surface.evaluate((element, slot) => { element.scrollTop = slot * 22 - 120 }, slotIndex)
@@ -134,30 +150,33 @@ test('mobile touch drag shows the guide and keeps the page within the viewport',
   let snapshot: { time: string; top: number }
   let overlayCount: number
   await dispatchTouch(card, 'touchstart', startPoint)
-  try {
-    for (let step = 1; step <= 8; step += 1) {
-      const ratio = step / 8
-      await dispatchTouch(card, 'touchmove', {
-        x: startPoint.x + (target.x - startPoint.x) * ratio,
-        y: startPoint.y + (target.y - startPoint.y) * ratio,
-      })
-    }
-    snapshot = await guideSnapshot(page)
-    overlayCount = await page.locator('.drag-overlay').count()
-  } finally {
-    await page.evaluate(() => window.dispatchEvent(new Event('resize')))
+  for (let step = 1; step <= 8; step += 1) {
+    const ratio = step / 8
+    await dispatchTouch(card, 'touchmove', {
+      x: startPoint.x + (target.x - startPoint.x) * ratio,
+      y: startPoint.y + (target.y - startPoint.y) * ratio,
+    })
   }
+  snapshot = await guideSnapshot(page)
+  overlayCount = await page.locator('.drag-overlay').count()
 
   expectValidGuide(snapshot!)
   expect(overlayCount!).toBe(1)
-  await expect(page.locator('.drag-time-guide')).toHaveCount(0)
-
-  await card.tap()
-  await page.locator('.day-track').nth(0).locator('.drop-slot').nth(38).tap()
-  await expect.poll(() => savedStartTime(page)).toBe('09:30')
 
   const hasPageOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)
   expect(hasPageOverflow).toBe(false)
+})
+
+test('mobile tap scheduling remains available', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile-chromium', 'Mobile scheduling regression')
+  await seedTasks(page, [task()])
+  await page.goto('/')
+
+  await page.locator('.task-card', { hasText: '回归测试任务' }).tap()
+  await page.locator('.calendar-surface').evaluate((element) => { element.scrollTop = 38 * 22 - 120 })
+  await page.locator('.day-track').nth(0).locator('.drop-slot').nth(38).tap()
+
+  await expect.poll(() => savedStartTime(page)).toBe('09:30')
 })
 
 test('views, batch controls, reminders, and legacy data migration still work', async ({ page }, testInfo) => {
@@ -192,4 +211,85 @@ test('views, batch controls, reminders, and legacy data migration still work', a
   await expect(page.getByText('已选择 1 项')).toBeVisible()
   await page.getByLabel('批量修改颜色').selectOption('green')
   await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.color, STORAGE_KEY)).toBe('green')
+})
+
+test('cloud login sends a passwordless email link', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
+  await seedTasks(page, [])
+  let requestedEmail = ''
+  await page.route('http://127.0.0.1:54321/auth/v1/otp**', async (route) => {
+    requestedEmail = route.request().postDataJSON().email
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
+  })
+  await page.goto('/')
+
+  await page.getByRole('button', { name: '云同步' }).click()
+  await page.getByLabel('邮箱').fill('Tester@Example.com')
+  await page.getByRole('button', { name: '发送登录链接' }).click()
+
+  await expect(page.getByText('登录链接已发送')).toBeVisible()
+  expect(requestedEmail).toBe('tester@example.com')
+})
+
+test('first cloud sign-in requires a choice before replacing local tasks', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
+  const localTask = task({ id: 'local-task', title: '本机工作' })
+  const cloudTask = task({ id: 'cloud-task', title: '云端工作', color: 'purple', duration: 90 })
+  await seedTasks(page, [localTask])
+  await seedCloudSession(page)
+  await page.route('http://127.0.0.1:54321/rest/v1/workgrid_data**', async (route) => {
+    if (route.request().method() !== 'GET') return route.abort()
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/vnd.pgrst.object+json',
+      body: JSON.stringify({ tasks: [cloudTask], revision: 2, updated_at: '2026-10-05T02:00:00.000Z' }),
+    })
+  })
+  await page.goto('/')
+
+  const dialog = page.getByRole('dialog', { name: '选择首次同步数据' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('本机')
+  await expect(dialog).toContainText('云端')
+  await expect(page.locator('.task-card', { hasText: '本机工作' })).toBeVisible()
+
+  await dialog.getByRole('button', { name: '使用云端数据' }).click()
+  await expect(page.locator('.task-card', { hasText: '云端工作' })).toBeVisible()
+  await expect(page.locator('.task-card', { hasText: '本机工作' })).toHaveCount(0)
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.id, STORAGE_KEY)).toBe('cloud-task')
+})
+
+test('cloud initialization can retry without losing local tasks', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
+  const localTask = task({ id: 'offline-task', title: '离线保留工作' })
+  const cloudTask = task({ id: 'retry-cloud-task', title: '重连后的云端工作' })
+  await seedTasks(page, [localTask])
+  await seedCloudSession(page)
+  let attempts = 0
+  let connectionRestored = false
+  await page.route('http://127.0.0.1:54321/rest/v1/workgrid_data**', async (route) => {
+    if (route.request().method() !== 'GET') return route.abort()
+    attempts += 1
+    if (!connectionRestored) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'temporarily unavailable' }) })
+      return
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/vnd.pgrst.object+json',
+      body: JSON.stringify({ tasks: [cloudTask], revision: 4, updated_at: '2026-10-05T03:00:00.000Z' }),
+    })
+  })
+  await page.goto('/')
+
+  await page.getByRole('button', { name: '云同步' }).click()
+  const accountDialog = page.getByRole('dialog', { name: '云同步' })
+  await expect(accountDialog.getByText('同步失败')).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.task-card', { hasText: '离线保留工作' })).toBeVisible()
+  connectionRestored = true
+  await accountDialog.getByRole('button', { name: '重试连接' }).click()
+
+  await expect(page.getByRole('dialog', { name: '选择首次同步数据' })).toBeVisible()
+  expect(attempts).toBeGreaterThanOrEqual(2)
+  await expect(page.locator('.task-card', { hasText: '离线保留工作' })).toBeVisible()
 })

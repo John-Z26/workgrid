@@ -260,6 +260,32 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
 .overdue-item > button:hover { color: var(--text); }
 
 .data-management { position: relative; }
+.cloud-sync { position: relative; }
+.cloud-sync-button { position: relative; }
+.sync-indicator { position: absolute; right: 5px; bottom: 5px; width: 7px; height: 7px; border: 1px solid var(--surface); border-radius: 50%; background: #5eae72; }
+.cloud-sync-button.phase-error .sync-indicator, .cloud-sync-button.phase-offline .sync-indicator { background: #c94848; }
+.spin { animation: sync-spin 900ms linear infinite; }
+@keyframes sync-spin { to { transform: rotate(360deg); } }
+.account-dialog label { display: block; margin: 12px 0 6px; color: var(--muted); font-size: 12px; }
+.cloud-email-row { position: relative; }
+.cloud-email-row > svg { position: absolute; left: 10px; top: 10px; z-index: 1; color: var(--muted); }
+.cloud-email-row input { padding-left: 35px; }
+.login-sent { padding: 20px 8px 10px; text-align: center; }
+.login-sent > span { width: 38px; height: 38px; display: grid; place-items: center; margin: 0 auto 10px; color: #2d7241; border-radius: 50%; background: var(--green-soft); }
+.login-sent strong { display: block; font-size: 15px; }
+.login-sent p { margin: 7px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.login-other-email { margin: 12px auto 0; }
+.account-summary, .sync-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.account-summary > div, .sync-choice-grid > div { min-width: 0; padding: 12px 8px; }
+.account-summary > div:nth-child(odd), .sync-choice-grid > div:first-child { border-right: 1px solid var(--line); }
+.account-summary span, .account-summary strong, .sync-choice-grid span, .sync-choice-grid strong { display: block; }
+.account-summary span, .sync-choice-grid span { margin-bottom: 4px; color: var(--muted); font-size: 11px; }
+.account-summary strong, .sync-choice-grid strong { overflow-wrap: anywhere; font-size: 13px; font-weight: 600; }
+.sync-phase.phase-error, .sync-phase.phase-offline { color: var(--danger); }
+.account-signout { width: auto; order: initial; }
+.sync-choice-backdrop { z-index: 70; }
+.sync-choice-dialog { width: min(500px, 100%); }
+.sync-choice-actions { align-items: center; }
 .data-menu { position: absolute; top: 40px; right: 0; z-index: 30; width: 226px; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; box-shadow: 0 14px 34px rgba(20,25,29,.16); }
 .data-menu button { width: 100%; display: flex; align-items: flex-start; gap: 10px; padding: 9px; border: 0; border-radius: 5px; background: transparent; text-align: left; }
 .data-menu button:hover { background: var(--surface-subtle); }
@@ -392,6 +418,10 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
   .overdue-heading .secondary-button { width: auto; order: initial; }
   .data-dialog { padding: 15px; }
   .data-dialog .dialog-actions .secondary-button { order: initial; width: auto; }
+  .account-summary { grid-template-columns: 1fr; }
+  .account-summary > div:nth-child(odd) { border-right: 0; }
+  .account-summary > div:not(:last-child) { border-bottom: 1px solid var(--line); }
+  .sync-choice-actions .text-button { width: 100%; }
   .file-picker { grid-template-columns: auto 1fr; padding: 14px; }
   .file-picker label { grid-column: 1 / -1; width: 100%; }
   .backup-summary { grid-template-columns: 1fr; }
