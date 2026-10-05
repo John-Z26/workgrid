@@ -276,6 +276,10 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
 .login-sent p { margin: 7px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .login-other-email { margin: 12px auto 0; }
 .login-error { margin-top: 12px; }
+.otp-input { letter-spacing: 0; font-size: 18px; font-variant-numeric: tabular-nums; text-align: center; }
+.login-resend { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+.login-resend .text-button { min-height: 32px; }
+.login-resend .text-button:disabled { cursor: not-allowed; opacity: .5; }
 .account-summary, .sync-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .account-summary > div, .sync-choice-grid > div { min-width: 0; padding: 12px 8px; }
 .account-summary > div:nth-child(odd), .sync-choice-grid > div:first-child { border-right: 1px solid var(--line); }

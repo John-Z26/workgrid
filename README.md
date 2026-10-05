@@ -27,7 +27,7 @@ WorkGrid 现在是可安装的渐进式 Web 应用（PWA）：
 - 调整已排工作或移回待安排列表
 - 当前视图工作时长统计与时间冲突提示
 - 使用浏览器本地存储自动保存数据
-- 可选邮箱登录与云同步，支持跨设备实时更新和离线重试
+- 可选邮箱验证码登录与云同步，登录链接作为备用，支持跨设备实时更新和离线重试
 - 首次登录明确选择上传本机数据或使用云端数据，不会静默覆盖
 - 导出 JSON 备份、导入预览、合并或覆盖恢复
 - 导入前自动创建恢复点，并支持一次性撤销导入
@@ -49,7 +49,7 @@ WorkGrid 0.5.2 的提醒在应用打开或保持运行时检查。开始提醒�
 
 ## 云同步
 
-WorkGrid 0.6.0 使用 Supabase 提供可选云同步。未登录时仍是完整的本机应用；登录后，本机每次修改会自动同步，同一账户的其他设备会收到更新。断网时修改继续保存在浏览器，恢复网络后自动重试。
+WorkGrid 0.7.0 使用 Supabase 提供可选云同步。未登录时仍是完整的本机应用；用户可直接在当前页面输入邮箱中的六位验证码登录，邮件登录链接保留为备用。登录后，本机每次修改会自动同步，同一账户的其他设备会收到更新。断网时修改继续保存在浏览器，恢复网络后自动重试。
 
 云端表启用了行级权限，每位用户只能读取和修改自己的数据。导出备份仍然保留，建议定期下载独立备份。
 
@@ -57,8 +57,9 @@ WorkGrid 0.6.0 使用 Supabase 提供可选云同步。未登录时仍是完整�
 
 1. 在 Supabase 创建项目，在 SQL Editor 执行 `supabase/migrations/20261005000000_create_workgrid_data.sql`。
 2. 在 Authentication 的 URL Configuration 中，把 `https://zhoubx634.github.io/workgrid/` 加入 Redirect URLs。
-3. 在 GitHub 仓库的 Actions secrets 中添加 `VITE_SUPABASE_URL` 和 `VITE_SUPABASE_ANON_KEY`。
-4. 重新运行 GitHub Pages 工作流。Supabase 的 anon key 是网页客户端可用的公开密钥，安全隔离由数据库行级权限负责；不要使用 service role key。
+3. 在 Authentication 的 Emails 中修改 Magic Link 模板，同时加入 `{{ .Token }}` 验证码和 `{{ .ConfirmationURL }}` 登录链接，示例见 [Supabase 配置说明](supabase/README.md)。
+4. 在 GitHub 仓库的 Actions secrets 中添加 `VITE_SUPABASE_URL` 和 `VITE_SUPABASE_ANON_KEY`。
+5. 重新运行 GitHub Pages 工作流。Supabase 的 anon key 是网页客户端可用的公开密钥，安全隔离由数据库行级权限负责；不要使用 service role key。
 
 本地开发可将 [.env.example](.env.example) 复制为 `.env.local` 并填写同样的两项配置。未配置时云同步入口自动隐藏，其他功能不受影响。
 

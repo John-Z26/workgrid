@@ -213,7 +213,7 @@ test('views, batch controls, reminders, and legacy data migration still work', a
   await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.color, STORAGE_KEY)).toBe('green')
 })
 
-test('cloud login sends a passwordless email link', async ({ page }, testInfo) => {
+test('cloud login sends an email code with a link fallback', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
   await seedTasks(page, [])
   let requestedEmail = ''
@@ -225,9 +225,11 @@ test('cloud login sends a passwordless email link', async ({ page }, testInfo) =
 
   await page.getByRole('button', { name: '云同步' }).click()
   await page.getByLabel('邮箱').fill('Tester@Example.com')
-  await page.getByRole('button', { name: '发送登录链接' }).click()
+  await page.getByRole('button', { name: '发送验证码' }).click()
 
-  await expect(page.getByText('登录链接已发送')).toBeVisible()
+  await expect(page.getByText('验证码已发送')).toBeVisible()
+  await expect(page.getByLabel('邮箱验证码')).toBeVisible()
+  await expect(page.getByRole('button', { name: /秒后可重新发送/ })).toBeDisabled()
   expect(requestedEmail).toBe('tester@example.com')
 })
 
@@ -241,10 +243,45 @@ test('cloud login explains when email sending is rate limited', async ({ page },
 
   await page.getByRole('button', { name: '云同步' }).click()
   await page.getByLabel('邮箱').fill('tester@example.com')
-  await page.getByRole('button', { name: '发送登录链接' }).click()
+  await page.getByRole('button', { name: '发送验证码' }).click()
 
   await expect(page.getByRole('alert')).toHaveText('发送请求过于频繁，请等待几分钟后再试。')
   await expect(page.getByLabel('邮箱')).toHaveValue('tester@example.com')
+})
+
+test('cloud login verifies the email code in the current browser', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
+  await seedTasks(page, [])
+  const user = { id: '00000000-0000-4000-8000-000000000007', email: 'tester@example.com', aud: 'authenticated', role: 'authenticated' }
+  let requestedToken = ''
+  await page.route('http://127.0.0.1:54321/auth/v1/otp**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }))
+  await page.route('http://127.0.0.1:54321/auth/v1/verify**', async (route) => {
+    requestedToken = route.request().postDataJSON().token
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ access_token: 'verified-access-token', refresh_token: 'verified-refresh-token', expires_in: 3600, token_type: 'bearer', user }),
+    })
+  })
+  await page.route('http://127.0.0.1:54321/rest/v1/workgrid_data**', async (route) => {
+    if (route.request().method() !== 'GET') return route.abort()
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/vnd.pgrst.object+json',
+      body: JSON.stringify({ tasks: [], revision: 1, updated_at: '2026-10-05T04:00:00.000Z' }),
+    })
+  })
+  await page.goto('/')
+
+  await page.getByRole('button', { name: '云同步' }).click()
+  await page.getByLabel('邮箱').fill('tester@example.com')
+  await page.getByRole('button', { name: '发送验证码' }).click()
+  await page.getByLabel('邮箱验证码').fill('123456')
+  await page.getByRole('button', { name: '验证并登录' }).click()
+
+  await expect(page.getByText('账户与同步状态')).toBeVisible()
+  await expect(page.getByText('tester@example.com')).toBeVisible()
+  expect(requestedToken).toBe('123456')
 })
 
 test('first cloud sign-in requires a choice before replacing local tasks', async ({ page }, testInfo) => {

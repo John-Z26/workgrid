@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
-import { Check, Cloud, CloudOff, LogOut, Mail, RefreshCw, Upload, X } from 'lucide-react'
+import { Check, Cloud, CloudOff, KeyRound, LogOut, Mail, RefreshCw, Upload, X } from 'lucide-react'
 import { cloudClient, cloudConfigured } from '../cloudClient'
-import { cloudDataMatches, loginErrorMessage, parseCloudSnapshot, shouldApplyCloudSnapshot, taskFingerprint, type CloudSnapshot } from '../cloudData'
+import { cloudDataMatches, loginErrorMessage, otpVerificationErrorMessage, parseCloudSnapshot, shouldApplyCloudSnapshot, taskFingerprint, type CloudSnapshot } from '../cloudData'
 import type { Task } from '../types'
 
 type SyncPhase = 'local' | 'loading' | 'syncing' | 'synced' | 'offline' | 'error'
@@ -34,11 +34,14 @@ function formatSyncTime(value: string | null) {
 export default function CloudSync({ tasks, setTasks, onNotify }: CloudSyncProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [email, setEmail] = useState('')
+  const [otp, setOtp] = useState('')
   const [userEmail, setUserEmail] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
   const [phase, setPhase] = useState<SyncPhase>('local')
   const [messageSent, setMessageSent] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [verifying, setVerifying] = useState(false)
+  const [resendSeconds, setResendSeconds] = useState(0)
   const [initialChoice, setInitialChoice] = useState<InitialChoice | null>(null)
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null)
   const [syncError, setSyncError] = useState<string | null>(null)
@@ -54,6 +57,11 @@ export default function CloudSync({ tasks, setTasks, onNotify }: CloudSyncProps)
   useEffect(() => { tasksRef.current = tasks }, [tasks])
   useEffect(() => { replaceTasksRef.current = setTasks }, [setTasks])
   useEffect(() => { notifyRef.current = onNotify }, [onNotify])
+  useEffect(() => {
+    if (resendSeconds <= 0) return
+    const timer = window.setTimeout(() => setResendSeconds((current) => Math.max(0, current - 1)), 1000)
+    return () => window.clearTimeout(timer)
+  }, [resendSeconds])
 
   const upload = useCallback(async (nextTasks: Task[], notify = false) => {
     if (!cloudClient || !userId) return false
@@ -105,6 +113,9 @@ export default function CloudSync({ tasks, setTasks, onNotify }: CloudSyncProps)
     const { data: listener } = cloudClient.auth.onAuthStateChange((_event, session) => {
       setUserId(session?.user.id ?? null)
       setUserEmail(session?.user.email ?? null)
+      if (session) {
+        setMessageSent(false); setOtp(''); setSyncError(null); setResendSeconds(0)
+      }
       if (!session) {
         setReady(false); setInitialChoice(null); setPhase('local'); setLastSyncedAt(null); lastCloudFingerprint.current = null
       }
@@ -178,21 +189,50 @@ export default function CloudSync({ tasks, setTasks, onNotify }: CloudSyncProps)
 
   if (!cloudConfigured || !cloudClient) return null
 
-  async function sendLoginLink(event: React.FormEvent) {
-    event.preventDefault()
-    const normalized = email.trim().toLowerCase()
-    if (!normalized) return
+  async function requestLoginCode(normalized: string) {
     setSubmitting(true); setSyncError(null)
     try {
       const redirectTo = new URL(import.meta.env.BASE_URL, window.location.origin).href
       const { error } = await cloudClient!.auth.signInWithOtp({ email: normalized, options: { emailRedirectTo: redirectTo } })
-      if (error) { setSyncError(loginErrorMessage(error)); return }
-      setMessageSent(true)
+      if (error) { setSyncError(loginErrorMessage(error)); return false }
+      setMessageSent(true); setOtp(''); setResendSeconds(60)
+      return true
     } catch (caught) {
       setSyncError(loginErrorMessage(caught))
+      return false
     } finally {
       setSubmitting(false)
     }
+  }
+
+  async function sendLoginCode(event: React.FormEvent) {
+    event.preventDefault()
+    const normalized = email.trim().toLowerCase()
+    if (normalized) await requestLoginCode(normalized)
+  }
+
+  async function verifyLoginCode(event: React.FormEvent) {
+    event.preventDefault()
+    const normalizedEmail = email.trim().toLowerCase()
+    if (!normalizedEmail || otp.length !== 6) return
+    setVerifying(true); setSyncError(null)
+    try {
+      const { error } = await cloudClient!.auth.verifyOtp({ email: normalizedEmail, token: otp, type: 'email' })
+      if (error) setSyncError(otpVerificationErrorMessage(error))
+    } catch (caught) {
+      setSyncError(otpVerificationErrorMessage(caught))
+    } finally {
+      setVerifying(false)
+    }
+  }
+
+  async function resendLoginCode() {
+    if (resendSeconds > 0 || submitting) return
+    await requestLoginCode(email.trim().toLowerCase())
+  }
+
+  function changeLoginEmail() {
+    setMessageSent(false); setOtp(''); setSyncError(null); setResendSeconds(0)
   }
 
   async function chooseLocal() {
@@ -228,8 +268,14 @@ export default function CloudSync({ tasks, setTasks, onNotify }: CloudSyncProps)
     {menuOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setMenuOpen(false)}>
       <section className="data-dialog account-dialog" role="dialog" aria-modal="true" aria-labelledby="cloud-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="dialog-heading"><div className="dialog-title"><span className="dialog-icon"><Cloud size={18} /></span><div><h2 id="cloud-title">云同步</h2><p>{userId ? '账户与同步状态' : '登录后在不同设备使用同一份日程'}</p></div></div><button className="icon-button" type="button" aria-label="关闭" onClick={() => setMenuOpen(false)}><X size={18} /></button></div>
-        {!userId ? <form onSubmit={sendLoginLink}>
-          {messageSent ? <div className="login-sent"><span><Check size={18} /></span><strong>登录链接已发送</strong><p>请在邮件中打开链接，返回 WorkGrid 后会自动登录。</p><button className="text-button login-other-email" type="button" onClick={() => setMessageSent(false)}>使用其他邮箱</button></div> : <><label htmlFor="cloud-email">邮箱</label><div className="cloud-email-row"><Mail size={17} /><input id="cloud-email" type="email" autoComplete="email" required value={email} onChange={(event) => { setEmail(event.target.value); setSyncError(null) }} placeholder="name@example.com" /></div><p className="privacy-note">每个账户的数据相互隔离，不会公开给其他用户。</p>{syncError && <div className="error-message login-error" role="alert"><CloudOff size={17} />{syncError}</div>}<div className="dialog-actions"><button className="primary-button" type="submit" disabled={submitting}>{submitting ? '正在发送...' : '发送登录链接'}</button></div></>}
+        {!userId ? messageSent ? <form onSubmit={verifyLoginCode}>
+          <div className="login-sent"><span><Check size={18} /></span><strong>验证码已发送</strong><p>已发送至 {email.trim().toLowerCase()}，也可以使用邮件中的登录链接。</p></div>
+          <label htmlFor="cloud-otp">邮箱验证码</label><div className="cloud-email-row otp-row"><KeyRound size={17} /><input id="cloud-otp" className="otp-input" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={otp} onChange={(event) => { setOtp(event.target.value.replace(/\D/g, '').slice(0, 6)); setSyncError(null) }} placeholder="000000" /></div>
+          {syncError && <div className="error-message login-error" role="alert"><CloudOff size={17} />{syncError}</div>}
+          <div className="login-resend"><button className="text-button" type="button" disabled={resendSeconds > 0 || submitting} onClick={resendLoginCode}>{resendSeconds > 0 ? `${resendSeconds} 秒后可重新发送` : submitting ? '正在发送...' : '重新发送验证码'}</button><button className="text-button" type="button" onClick={changeLoginEmail}>更换邮箱</button></div>
+          <div className="dialog-actions"><button className="primary-button" type="submit" disabled={verifying || otp.length !== 6}>{verifying ? '正在验证...' : '验证并登录'}</button></div>
+        </form> : <form onSubmit={sendLoginCode}>
+          <label htmlFor="cloud-email">邮箱</label><div className="cloud-email-row"><Mail size={17} /><input id="cloud-email" type="email" autoComplete="email" required value={email} onChange={(event) => { setEmail(event.target.value); setSyncError(null) }} placeholder="name@example.com" /></div><p className="privacy-note">每个账户的数据相互隔离，不会公开给其他用户。</p>{syncError && <div className="error-message login-error" role="alert"><CloudOff size={17} />{syncError}</div>}<div className="dialog-actions"><button className="primary-button" type="submit" disabled={submitting}>{submitting ? '正在发送...' : '发送验证码'}</button></div>
         </form> : <>
           <div className="account-summary"><div><span>账户</span><strong>{userEmail}</strong></div><div><span>同步状态</span><strong className={`sync-phase phase-${phase}`}>{syncLabel(phase)}</strong></div><div><span>云端内容</span><strong>{tasks.length} 个工作方块</strong></div><div><span>最近同步</span><strong>{formatSyncTime(lastSyncedAt)}</strong></div></div>
           {syncError && <div className="error-message" role="alert"><CloudOff size={17} />同步暂不可用，本机数据仍已保存。</div>}

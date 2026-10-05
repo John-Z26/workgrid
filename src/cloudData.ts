@@ -49,3 +49,14 @@ export function loginErrorMessage(error: unknown) {
   if (message.includes('fetch') || message.includes('network')) return '无法连接登录服务，请检查网络后重试。'
   return '登录链接发送失败，请稍后重试。'
 }
+
+export function otpVerificationErrorMessage(error: unknown) {
+  if (typeof error !== 'object' || error === null) return '验证码验证失败，请稍后重试。'
+  const details = error as { code?: unknown; message?: unknown; status?: unknown }
+  const code = typeof details.code === 'string' ? details.code.toLowerCase() : ''
+  const message = typeof details.message === 'string' ? details.message.toLowerCase() : ''
+  if (details.status === 429 || code.includes('rate_limit') || message.includes('rate limit')) return '验证请求过于频繁，请稍后再试。'
+  if (code.includes('expired') || code.includes('invalid') || message.includes('expired') || message.includes('invalid')) return '验证码无效或已过期，请重新发送。'
+  if (message.includes('fetch') || message.includes('network')) return '无法连接登录服务，请检查网络后重试。'
+  return '验证码验证失败，请稍后重试。'
+}
