@@ -231,6 +231,22 @@ test('cloud login sends a passwordless email link', async ({ page }, testInfo) =
   expect(requestedEmail).toBe('tester@example.com')
 })
 
+test('cloud login explains when email sending is rate limited', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
+  await seedTasks(page, [])
+  await page.route('http://127.0.0.1:54321/auth/v1/otp**', async (route) => {
+    await route.fulfill({ status: 429, contentType: 'application/json', body: JSON.stringify({ code: 'over_email_send_rate_limit', message: 'email rate limit exceeded' }) })
+  })
+  await page.goto('/')
+
+  await page.getByRole('button', { name: '云同步' }).click()
+  await page.getByLabel('邮箱').fill('tester@example.com')
+  await page.getByRole('button', { name: '发送登录链接' }).click()
+
+  await expect(page.getByRole('alert')).toHaveText('发送请求过于频繁，请等待几分钟后再试。')
+  await expect(page.getByLabel('邮箱')).toHaveValue('tester@example.com')
+})
+
 test('first cloud sign-in requires a choice before replacing local tasks', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
   const localTask = task({ id: 'local-task', title: '本机工作' })

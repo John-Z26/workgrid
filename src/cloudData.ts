@@ -38,3 +38,14 @@ export function shouldApplyCloudSnapshot(localTasks: Task[], lastCloudFingerprin
   const incomingFingerprint = taskFingerprint(incomingTasks)
   return localFingerprint === incomingFingerprint || localFingerprint === lastCloudFingerprint
 }
+
+export function loginErrorMessage(error: unknown) {
+  if (typeof error !== 'object' || error === null) return '登录链接发送失败，请稍后重试。'
+  const details = error as { code?: unknown; message?: unknown; status?: unknown }
+  const code = typeof details.code === 'string' ? details.code.toLowerCase() : ''
+  const message = typeof details.message === 'string' ? details.message.toLowerCase() : ''
+  if (details.status === 429 || code.includes('rate_limit') || message.includes('rate limit')) return '发送请求过于频繁，请等待几分钟后再试。'
+  if (code.includes('invalid') || message.includes('invalid email')) return '邮箱地址无效，请检查后重试。'
+  if (message.includes('fetch') || message.includes('network')) return '无法连接登录服务，请检查网络后重试。'
+  return '登录链接发送失败，请稍后重试。'
+}

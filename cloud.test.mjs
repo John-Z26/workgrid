@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { cloudDataMatches, parseCloudSnapshot, shouldApplyCloudSnapshot, taskFingerprint } from './src/cloudData.ts'
+import { cloudDataMatches, loginErrorMessage, parseCloudSnapshot, shouldApplyCloudSnapshot, taskFingerprint } from './src/cloudData.ts'
 
 const task = {
   id: 'cloud-task',
@@ -28,6 +28,9 @@ const incomingEdit = [{ ...task, duration: 90 }]
 assert.equal(shouldApplyCloudSnapshot(snapshot.tasks, previousCloudFingerprint, incomingEdit), true)
 assert.equal(shouldApplyCloudSnapshot(localEdit, previousCloudFingerprint, incomingEdit), false)
 assert.equal(shouldApplyCloudSnapshot(localEdit, previousCloudFingerprint, localEdit), true)
+assert.equal(loginErrorMessage({ status: 429, message: 'email rate limit exceeded' }), '发送请求过于频繁，请等待几分钟后再试。')
+assert.equal(loginErrorMessage(new TypeError('Failed to fetch')), '无法连接登录服务，请检查网络后重试。')
+assert.equal(loginErrorMessage({ message: 'unexpected auth error' }), '登录链接发送失败，请稍后重试。')
 assert.throws(() => parseCloudSnapshot({ tasks: [{ ...task, duration: 0 }], revision: 1, updated_at: '2026-10-05T01:00:00.000Z' }))
 assert.throws(() => parseCloudSnapshot({ tasks: [task, task], revision: 1, updated_at: '2026-10-05T01:00:00.000Z' }))
 assert.throws(() => parseCloudSnapshot({ tasks: [], revision: 0, updated_at: '2026-10-05T01:00:00.000Z' }))
