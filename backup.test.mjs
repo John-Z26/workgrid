@@ -5,6 +5,7 @@ import {
   parseBackupText,
   planImport,
 } from './src/backup.ts'
+import { dueReminderTasks, reminderLabel } from './src/reminders.ts'
 
 const task = {
   id: 'task-1',
@@ -18,13 +19,14 @@ const task = {
 const backup = createBackup([task])
 const parsed = parseBackupText(JSON.stringify(backup))
 assert.equal(parsed.taskCount, 1)
-assert.deepEqual(parsed.tasks[0], { ...task, status: 'todo', completedAt: null })
+assert.deepEqual(parsed.tasks[0], { ...task, status: 'todo', completedAt: null, reminderMinutes: null, remindedAt: null })
 
 const versionOneBackup = { ...backup, schemaVersion: 1 }
 const migrated = parseBackupText(JSON.stringify(versionOneBackup))
-assert.equal(migrated.schemaVersion, 2)
+assert.equal(migrated.schemaVersion, 3)
 assert.equal(migrated.tasks[0].status, 'todo')
 assert.equal(migrated.tasks[0].completedAt, null)
+assert.equal(migrated.tasks[0].reminderMinutes, null)
 
 for (const value of [
   '{',
@@ -51,9 +53,23 @@ assert.equal(conflictPlan.conflicts, 1)
 assert.equal(conflictPlan.added, 1)
 assert.notEqual(conflictPlan.mergedTasks[0].id, task.id)
 
-const completedTask = { ...task, id: 'task-3', status: 'completed', completedAt: '2026-10-03T09:00:00.000Z' }
+const completedTask = { ...task, id: 'task-3', status: 'completed', completedAt: '2026-10-03T09:00:00.000Z', reminderMinutes: 10, remindedAt: '2026-10-03T08:50:00.000Z' }
 const completedRoundTrip = parseBackupText(JSON.stringify(createBackup([completedTask])))
 assert.equal(completedRoundTrip.tasks[0].status, 'completed')
 assert.equal(completedRoundTrip.tasks[0].completedAt, completedTask.completedAt)
+assert.equal(completedRoundTrip.tasks[0].reminderMinutes, 10)
+
+const reminderTask = {
+  ...task,
+  id: 'task-reminder',
+  start: '2026-10-03T10:00:00.000Z',
+  reminderMinutes: 10,
+  remindedAt: null,
+  status: 'todo',
+  completedAt: null,
+}
+assert.equal(dueReminderTasks([reminderTask], new Date('2026-10-03T09:50:00.000Z')).length, 1)
+assert.equal(dueReminderTasks([{ ...reminderTask, remindedAt: '2026-10-03T09:50:00.000Z' }], new Date('2026-10-03T09:51:00.000Z')).length, 0)
+assert.equal(reminderLabel(1440), '提前 1 天')
 
 console.log('backup tests passed')

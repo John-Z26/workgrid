@@ -20,6 +20,8 @@ function initialTasks(): Task[] {
       createdAt: new Date().toISOString(),
       status: 'todo',
       completedAt: null,
+      reminderMinutes: null,
+      remindedAt: null,
     },
     {
       id: makeId(),
@@ -30,6 +32,8 @@ function initialTasks(): Task[] {
       createdAt: new Date().toISOString(),
       status: 'todo',
       completedAt: null,
+      reminderMinutes: null,
+      remindedAt: null,
     },
     {
       id: makeId(),
@@ -40,6 +44,8 @@ function initialTasks(): Task[] {
       createdAt: new Date().toISOString(),
       status: 'todo',
       completedAt: null,
+      reminderMinutes: 10,
+      remindedAt: null,
     },
     {
       id: makeId(),
@@ -50,6 +56,8 @@ function initialTasks(): Task[] {
       createdAt: new Date().toISOString(),
       status: 'todo',
       completedAt: null,
+      reminderMinutes: null,
+      remindedAt: null,
     },
   ]
 }
@@ -69,11 +77,13 @@ export function saveTasks(tasks: Task[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks))
 }
 
-function migrateTask(value: Task | (Omit<Task, 'status' | 'completedAt'> & Partial<Pick<Task, 'status' | 'completedAt'>>)): Task {
+function migrateTask(value: Partial<Task> & Pick<Task, 'id' | 'title' | 'color' | 'duration' | 'start' | 'createdAt'>): Task {
   return {
     ...value,
     status: value.status ?? 'todo',
     completedAt: value.completedAt ?? null,
+    reminderMinutes: value.reminderMinutes ?? null,
+    remindedAt: value.remindedAt ?? null,
   }
 }
 

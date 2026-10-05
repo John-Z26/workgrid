@@ -12,8 +12,8 @@ import {
 import { zhCN } from 'date-fns/locale'
 import type { Task, ViewMode } from './types'
 
-export const WORK_START = 8
-export const WORK_END = 20
+export const WORK_START = 0
+export const WORK_END = 24
 
 export function weekStart(date: Date) {
   return startOfWeek(date, { weekStartsOn: 1 })

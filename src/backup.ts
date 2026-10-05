@@ -1,12 +1,11 @@
 import type { Task, TaskColor, WorkGridBackup } from './types'
 
 export const BACKUP_FORMAT = 'workgrid-backup'
-export const BACKUP_SCHEMA_VERSION = 2
+export const BACKUP_SCHEMA_VERSION = 3
 export const MAX_BACKUP_BYTES = 5 * 1024 * 1024
-export const APP_VERSION = '0.3.0'
+export const APP_VERSION = '0.5.0'
 
 const COLORS: TaskColor[] = ['red', 'orange', 'yellow', 'green', 'blue', 'indigo', 'purple']
-const DURATIONS = [15, 30, 60, 90, 120, 180]
 
 export class BackupError extends Error {
   constructor(message: string) {
@@ -53,7 +52,7 @@ function validateTask(value: unknown, index: number): Task {
   if (typeof color !== 'string' || !COLORS.includes(color as TaskColor)) {
     throw new BackupError(`第 ${index + 1} 个工作方块颜色无效`)
   }
-  if (typeof duration !== 'number' || !DURATIONS.includes(duration)) {
+  if (typeof duration !== 'number' || !Number.isInteger(duration) || duration < 15 || duration > 720 || duration % 15 !== 0) {
     throw new BackupError(`第 ${index + 1} 个工作方块时长无效`)
   }
   if (start !== null && !isIsoDate(start)) {
@@ -65,11 +64,19 @@ function validateTask(value: unknown, index: number): Task {
 
   const status = value.status ?? 'todo'
   const completedAt = value.completedAt ?? null
+  const reminderMinutes = value.reminderMinutes ?? null
+  const remindedAt = value.remindedAt ?? null
   if (status !== 'todo' && status !== 'in-progress' && status !== 'completed') {
     throw new BackupError(`第 ${index + 1} 个工作方块状态无效`)
   }
   if (completedAt !== null && !isIsoDate(completedAt)) {
     throw new BackupError(`第 ${index + 1} 个工作方块完成时间无效`)
+  }
+  if (reminderMinutes !== null && (typeof reminderMinutes !== 'number' || ![0, 5, 10, 15, 30, 60, 1440].includes(reminderMinutes))) {
+    throw new BackupError(`第 ${index + 1} 个工作方块提醒时间无效`)
+  }
+  if (remindedAt !== null && !isIsoDate(remindedAt)) {
+    throw new BackupError(`第 ${index + 1} 个工作方块提醒记录无效`)
   }
 
   return {
@@ -81,6 +88,8 @@ function validateTask(value: unknown, index: number): Task {
     createdAt,
     status,
     completedAt: completedAt as string | null,
+    reminderMinutes: reminderMinutes as number | null,
+    remindedAt: remindedAt as string | null,
   }
 }
 
@@ -166,6 +175,8 @@ function tasksEqual(left: Task, right: Task) {
     && left.createdAt === right.createdAt
     && left.status === right.status
     && left.completedAt === right.completedAt
+    && left.reminderMinutes === right.reminderMinutes
+    && left.remindedAt === right.remindedAt
 }
 
 function nextUniqueId(usedIds: Set<string>) {
