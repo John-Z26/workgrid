@@ -22,6 +22,8 @@ export interface Task {
   completedAt: string | null
   reminderMinutes: number | null
   remindedAt: string | null
+  endReminder: boolean
+  endRemindedAt: string | null
 }
 
 export interface TaskDraft {
@@ -32,7 +34,7 @@ export interface TaskDraft {
 
 export interface WorkGridBackup {
   format: 'workgrid-backup'
-  schemaVersion: 3
+  schemaVersion: 4
   appVersion: string
   exportedAt: string
   taskCount: number

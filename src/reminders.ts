@@ -10,6 +10,15 @@ export function dueReminderTasks(tasks: Task[], now = new Date()) {
   })
 }
 
+export function dueEndReminderTasks(tasks: Task[], now = new Date()) {
+  const nowMs = now.getTime()
+  return tasks.filter((task) => {
+    if (!task.start || !task.endReminder || task.endRemindedAt || task.status === 'completed') return false
+    const endMs = Date.parse(task.start) + task.duration * 60_000
+    return nowMs >= endMs && nowMs < endMs + 15 * 60_000
+  })
+}
+
 export function reminderLabel(minutes: number | null) {
   if (minutes === null) return '不提醒'
   if (minutes === 0) return '开始时'
