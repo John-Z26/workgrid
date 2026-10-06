@@ -160,6 +160,11 @@ function dragStartY(event: Event) {
   return null
 }
 
+interface UndoEntry {
+  tasks: Task[]
+  label: string
+}
+
 function App() {
   const [tasks, setTasks] = useState<Task[]>(loadTasks)
   const [view, setView] = useState<ViewMode>('week')
@@ -184,17 +189,25 @@ function App() {
   const [resizePreview, setResizePreview] = useState<{ id: string; duration: number } | null>(null)
   const [pendingSchedule, setPendingSchedule] = useState<{ taskId: string; slot: Date } | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [undoEntry, setUndoEntry] = useState<UndoEntry | null>(null)
+  const [trashOpen, setTrashOpen] = useState(false)
   const [canUndoImport, setCanUndoImport] = useState(() => loadImportRecovery() !== null)
   const [batchMode, setBatchMode] = useState(false)
   const [batchSelection, setBatchSelection] = useState<Set<string>>(new Set())
   const [dragGuide, setDragGuide] = useState<DragGuide | null>(null)
   const [dragPreviewOffsetY, setDragPreviewOffsetY] = useState(0)
   const calendarScrollRef = useRef<HTMLDivElement>(null)
+  const tasksRef = useRef(tasks)
   const deliveredReminderKeys = useRef<Set<string>>(new Set())
   const sensors = useSensors(useSensor(MouseSensor, { activationConstraint: { distance: 4 } }), useSensor(TouchSensor, { activationConstraint: { distance: 4 } }))
 
   useEffect(() => saveTasks(tasks), [tasks])
-  useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(null), 2400); return () => window.clearTimeout(timer) }, [toast])
+  useEffect(() => { tasksRef.current = tasks }, [tasks])
+  useEffect(() => {
+    if (!toast) return
+    const timer = window.setTimeout(() => { setToast(null); setUndoEntry(null) }, undoEntry ? 6000 : 2400)
+    return () => window.clearTimeout(timer)
+  }, [toast, undoEntry])
   useEffect(() => {
     if (view === 'month') return
     const frame = window.requestAnimationFrame(() => { if (calendarScrollRef.current) calendarScrollRef.current.scrollTop = 7.5 * 4 * SLOT_HEIGHT - 24 })
@@ -215,6 +228,7 @@ function App() {
         return true
       })
       if (dueStarts.length === 0 && dueEnds.length === 0) return
+      setUndoEntry(null)
       const deliveredAt = new Date().toISOString()
       const startIds = new Set(dueStarts.map((task) => task.id))
       const endIds = new Set(dueEnds.map((task) => task.id))
@@ -240,54 +254,81 @@ function App() {
     return () => window.clearInterval(timer)
   }, [tasks])
 
-  const filteredTasks = useMemo(() => tasks.filter((task) => {
+  const activeTasks = useMemo(() => tasks.filter((task) => !task.deletedAt), [tasks])
+  const trashedTasks = useMemo(() => tasks.filter((task) => task.deletedAt).sort((left, right) => Date.parse(right.deletedAt!) - Date.parse(left.deletedAt!)), [tasks])
+  const filteredTasks = useMemo(() => activeTasks.filter((task) => {
     const query = searchQuery.trim().toLocaleLowerCase()
     return (!query || task.title.toLocaleLowerCase().includes(query) || task.tags.some((tag) => tag.toLocaleLowerCase().includes(query)))
       && (statusFilter === 'all' || task.status === statusFilter)
       && (tagFilter === 'all' || task.tags.includes(tagFilter))
-  }), [tasks, searchQuery, statusFilter, tagFilter])
+  }), [activeTasks, searchQuery, statusFilter, tagFilter])
   const unscheduled = useMemo(() => filteredTasks.filter((task) => !task.start), [filteredTasks])
   const visibleTasks = useMemo(() => filteredTasks.filter((task) => taskIsVisible(task, anchor, view)), [filteredTasks, anchor, view])
-  const allTags = useMemo(() => [...new Set(tasks.flatMap((task) => task.tags))].sort((a, b) => a.localeCompare(b, 'zh-CN')), [tasks])
-  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null
-  const activeTask = tasks.find((task) => task.id === draggingTaskId) ?? null
+  const allTags = useMemo(() => [...new Set(activeTasks.flatMap((task) => task.tags))].sort((a, b) => a.localeCompare(b, 'zh-CN')), [activeTasks])
+  const selectedTask = activeTasks.find((task) => task.id === selectedTaskId) ?? null
+  const activeTask = activeTasks.find((task) => task.id === draggingTaskId) ?? null
   const today = startOfDay(new Date())
   const todayTasks = filteredTasks.filter((task) => task.start && isSameDay(new Date(task.start), today))
   const completedTodayTasks = todayTasks.filter((task) => task.status === 'completed')
   const overdueTasks = filteredTasks.filter((task) => task.start && isBefore(new Date(task.start), today) && task.status !== 'completed')
 
-  function notify(message: string) { setToast(message) }
+  function notify(message: string) { setUndoEntry(null); setToast(message) }
+  function commitTaskChange(label: string, message: string, update: (current: Task[]) => Task[]) {
+    const current = tasksRef.current
+    const next = update(current)
+    if (next === current) return
+    tasksRef.current = next
+    setUndoEntry({ tasks: current, label })
+    setTasks(next)
+    setToast(message)
+  }
+  function undoLastChange() {
+    if (!undoEntry) return
+    tasksRef.current = undoEntry.tasks
+    setTasks(undoEntry.tasks)
+    setUndoEntry(null)
+    setSelectedTaskId(null)
+    setBatchSelection(new Set())
+    setToast(`已撤销${undoEntry.label}`)
+  }
+  function replaceTasksFromExternal(value: React.SetStateAction<Task[]>) {
+    setUndoEntry(null)
+    setTasks((current) => {
+      const next = typeof value === 'function' ? value(current) : value
+      tasksRef.current = next
+      return next
+    })
+  }
   function selectView(next: ViewMode) { setView(next); if (next === 'today') setAnchor(new Date()) }
   function updateStatus(taskId: string, status: TaskStatus) {
-    setTasks((current) => current.map((task) => {
+    commitTaskChange('状态修改', status === 'completed' ? '任务已完成' : status === 'in-progress' ? '任务已开始' : '任务已重新打开', (current) => current.map((task) => {
       if (status === 'in-progress' && task.id !== taskId && task.status === 'in-progress') return { ...task, status: 'todo', completedAt: null }
       if (task.id !== taskId) return task
       return { ...task, status, completedAt: status === 'completed' ? new Date().toISOString() : null }
     }))
-    notify(status === 'completed' ? '任务已完成' : status === 'in-progress' ? '任务已开始' : '任务已重新打开')
   }
   function createTask(event: React.FormEvent) {
     event.preventDefault(); const title = draft.title.trim(); if (!title) return
     const duration = parseDurationInput(draftDuration)
     if (duration === null) { notify('预计时长应为 1 至 720 的整数分钟'); return }
-    setTasks((current) => [{ id: makeId(), title, color: draft.color, duration, start: null, createdAt: new Date().toISOString(), status: 'todo', completedAt: null, reminderMinutes: null, remindedAt: null, endReminder: false, endRemindedAt: null, tags: parseTags(draftTags) }, ...current])
-    setDraft((current) => ({ ...current, title: '', duration, tags: [] })); setDraftDuration(String(duration)); setDraftTags(''); notify('已创建工作方块')
+    commitTaskChange('创建工作', '已创建工作方块', (current) => [{ id: makeId(), title, color: draft.color, duration, start: null, createdAt: new Date().toISOString(), status: 'todo', completedAt: null, reminderMinutes: null, remindedAt: null, endReminder: false, endRemindedAt: null, tags: parseTags(draftTags), deletedAt: null }, ...current])
+    setDraft((current) => ({ ...current, title: '', duration, tags: [] })); setDraftDuration(String(duration)); setDraftTags('')
   }
   function scheduleTask(taskId: string, slot: Date, reopenCompleted?: boolean) {
     const normalized = normalizeDropDate(slot, view)
-    const moving = tasks.find((task) => task.id === taskId)
+    const moving = activeTasks.find((task) => task.id === taskId)
     if (moving?.status === 'completed' && reopenCompleted === undefined) { setPendingSchedule({ taskId, slot: normalized }); return }
     const movingEnd = moving ? addMinutes(normalized, moving.duration) : normalized
-    const overlapping = tasks.some((task) => {
+    const overlapping = activeTasks.some((task) => {
       if (task.id === taskId || !task.start) return false
       const start = new Date(task.start); return start < movingEnd && addMinutes(start, task.duration) > normalized
     })
-    setTasks((current) => current.map((task) => task.id === taskId ? { ...task, start: normalized.toISOString(), remindedAt: null, endRemindedAt: null, status: reopenCompleted ? 'todo' : task.status, completedAt: reopenCompleted ? null : task.completedAt } : task))
-    setSelectedTaskId(null); notify(overlapping ? '已安排，与其他工作时间重叠' : '已安排到日历')
+    commitTaskChange('排期', overlapping ? '已安排，与其他工作时间重叠' : '已安排到日历', (current) => current.map((task) => task.id === taskId ? { ...task, start: normalized.toISOString(), remindedAt: null, endRemindedAt: null, status: reopenCompleted ? 'todo' : task.status, completedAt: reopenCompleted ? null : task.completedAt } : task))
+    setSelectedTaskId(null)
   }
   function unscheduleTask(taskId: string) {
-    setTasks((current) => current.map((task) => task.id === taskId ? { ...task, start: null, remindedAt: null, endRemindedAt: null, status: task.status === 'in-progress' ? 'todo' : task.status } : task))
-    setSelectedTaskId(null); notify('已移回待安排')
+    commitTaskChange('移回待安排', '已移回待安排', (current) => current.map((task) => task.id === taskId ? { ...task, start: null, remindedAt: null, endRemindedAt: null, status: task.status === 'in-progress' ? 'todo' : task.status } : task))
+    setSelectedTaskId(null)
   }
   function handleDragStart(event: DragStartEvent) {
     const id = String(event.active.id)
@@ -338,7 +379,8 @@ function App() {
     if ((editingReminder !== null || editingEndReminder) && editingStart && 'Notification' in window && Notification.permission === 'default') {
       try { await Notification.requestPermission() } catch { /* 应用内提醒仍然可用 */ }
     }
-    setTasks((current) => current.map((task) => {
+    const message = (editingReminder !== null || editingEndReminder) && editingStart && (!('Notification' in window) || Notification.permission !== 'granted') ? '修改已保存，将使用应用内提醒' : '修改已保存'
+    commitTaskChange('编辑工作', message, (current) => current.map((task) => {
       if (editingStatus === 'in-progress' && task.id !== editingTaskId && task.status === 'in-progress') return { ...task, status: 'todo', completedAt: null }
       if (task.id !== editingTaskId) return task
       const start = fromDateTimeLocal(editingStart)
@@ -346,35 +388,37 @@ function App() {
       const endReminderChanged = start !== task.start || duration !== task.duration || editingEndReminder !== task.endReminder
       return { ...task, ...editingDraft, tags: parseTags(editingTags), duration, title: editingDraft.title.trim(), start, status: editingStatus, completedAt: editingStatus === 'completed' ? task.completedAt ?? new Date().toISOString() : null, reminderMinutes: editingReminder, remindedAt: startReminderChanged ? null : task.remindedAt, endReminder: editingEndReminder, endRemindedAt: endReminderChanged ? null : task.endRemindedAt }
     }))
-    setEditingTaskId(null); notify((editingReminder !== null || editingEndReminder) && editingStart && (!('Notification' in window) || Notification.permission !== 'granted') ? '修改已保存，将使用应用内提醒' : '修改已保存')
+    setEditingTaskId(null)
   }
   function deleteEditingTask() {
     if (!editingTaskId) return
-    setTasks((current) => current.filter((task) => task.id !== editingTaskId)); setSelectedTaskId((current) => current === editingTaskId ? null : current); setEditingTaskId(null); notify('工作方块已删除')
+    const deletedAt = new Date().toISOString()
+    commitTaskChange('删除工作', '已移入回收站', (current) => current.map((task) => task.id === editingTaskId ? { ...task, deletedAt } : task))
+    setSelectedTaskId((current) => current === editingTaskId ? null : current); setEditingTaskId(null)
   }
   function importTasks(nextTasks: Task[], message: string) {
-    try { saveImportRecovery(tasks); saveTasks(nextTasks); setTasks(nextTasks); setSelectedTaskId(null); setEditingTaskId(null); setCanUndoImport(true); notify(message); return true }
+    try { saveImportRecovery(tasks); saveTasks(nextTasks); replaceTasksFromExternal(nextTasks); setSelectedTaskId(null); setEditingTaskId(null); setCanUndoImport(true); notify(message); return true }
     catch { notify('浏览器存储空间不足，导入未完成'); return false }
   }
   function undoLastImport() {
     const recovery = loadImportRecovery(); if (!recovery) { setCanUndoImport(false); notify('没有可恢复的导入记录'); return }
-    try { saveTasks(recovery); setTasks(recovery); clearImportRecovery(); setCanUndoImport(false); setSelectedTaskId(null); notify('已撤销上次导入') }
+    try { saveTasks(recovery); replaceTasksFromExternal(recovery); clearImportRecovery(); setCanUndoImport(false); setSelectedTaskId(null); notify('已撤销上次导入') }
     catch { notify('恢复失败，当前数据未改变') }
   }
   function moveToToday(taskId: string) {
-    setTasks((current) => current.map((task) => {
+    commitTaskChange('移到今天', '已移到今天', (current) => current.map((task) => {
       if (task.id !== taskId || !task.start) return task
       const old = new Date(task.start); const next = new Date(); next.setHours(old.getHours(), old.getMinutes(), 0, 0)
       return { ...task, start: next.toISOString(), status: 'todo', completedAt: null, remindedAt: null, endRemindedAt: null }
-    })); notify('已移到今天')
+    }))
   }
   function moveAllOverdue() {
     const ids = new Set(overdueTasks.map((task) => task.id))
-    setTasks((current) => current.map((task) => {
+    commitTaskChange('批量移到今天', `已将 ${ids.size} 项工作移到今天`, (current) => current.map((task) => {
       if (!ids.has(task.id) || !task.start) return task
       const old = new Date(task.start); const next = new Date(); next.setHours(old.getHours(), old.getMinutes(), 0, 0)
       return { ...task, start: next.toISOString(), status: 'todo', completedAt: null, remindedAt: null, endRemindedAt: null }
-    })); notify(`已将 ${ids.size} 项工作移到今天`)
+    }))
   }
   function startResize(event: React.PointerEvent, task: Task) {
     if (event.pointerType === 'touch') return
@@ -382,8 +426,8 @@ function App() {
     const onMove = (moveEvent: PointerEvent) => { const slots = Math.round((moveEvent.clientY - startY) / SLOT_HEIGHT); setResizePreview({ id: task.id, duration: Math.max(15, Math.min(720, original + slots * SLOT_MINUTES)) }) }
     const onUp = (upEvent: PointerEvent) => {
       const slots = Math.round((upEvent.clientY - startY) / SLOT_HEIGHT); const duration = Math.max(15, Math.min(720, original + slots * SLOT_MINUTES))
-      setTasks((current) => current.map((item) => item.id === task.id ? { ...item, duration, endRemindedAt: null } : item)); setResizePreview(null)
-      window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); notify(`时长已调整为 ${durationLabel(duration)}`)
+      commitTaskChange('时长调整', `时长已调整为 ${durationLabel(duration)}`, (current) => current.map((item) => item.id === task.id ? { ...item, duration, endRemindedAt: null } : item)); setResizePreview(null)
+      window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp)
     }
     window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp)
   }
@@ -391,34 +435,54 @@ function App() {
   function toggleBatchTask(taskId: string) { setBatchSelection((current) => { const next = new Set(current); next.has(taskId) ? next.delete(taskId) : next.add(taskId); return next }) }
   function batchSetStatus(status: TaskStatus) {
     if (batchSelection.size === 0) return
-    setTasks((current) => current.map((task) => batchSelection.has(task.id) ? { ...task, status, completedAt: status === 'completed' ? new Date().toISOString() : null } : task)); notify(`已更新 ${batchSelection.size} 项工作的状态`)
+    commitTaskChange('批量状态修改', `已更新 ${batchSelection.size} 项工作的状态`, (current) => current.map((task) => batchSelection.has(task.id) ? { ...task, status, completedAt: status === 'completed' ? new Date().toISOString() : null } : task))
   }
   function batchSetColor(color: TaskColor) {
     if (batchSelection.size === 0) return
-    setTasks((current) => current.map((task) => batchSelection.has(task.id) ? { ...task, color } : task)); notify(`已更新 ${batchSelection.size} 项工作的颜色`)
+    commitTaskChange('批量颜色修改', `已更新 ${batchSelection.size} 项工作的颜色`, (current) => current.map((task) => batchSelection.has(task.id) ? { ...task, color } : task))
   }
   function batchSetTags() {
     const tags = parseTags(batchTags)
     if (batchSelection.size === 0 || tags.length === 0) return
-    setTasks((current) => current.map((task) => batchSelection.has(task.id) ? { ...task, tags: [...new Set([...task.tags, ...tags])].slice(0, 8) } : task))
-    notify(`已为 ${batchSelection.size} 项工作添加标签`)
+    commitTaskChange('批量添加标签', `已为 ${batchSelection.size} 项工作添加标签`, (current) => current.map((task) => batchSelection.has(task.id) ? { ...task, tags: [...new Set([...task.tags, ...tags])].slice(0, 8) } : task))
     setBatchTags('')
   }
   function batchSetStartReminder(value: string) {
     if (batchSelection.size === 0) return
     const reminderMinutes = value === 'none' ? null : Number(value)
-    setTasks((current) => current.map((task) => batchSelection.has(task.id) ? { ...task, reminderMinutes, remindedAt: null } : task))
-    notify(`已更新 ${batchSelection.size} 项工作的开始提醒`)
+    commitTaskChange('批量开始提醒修改', `已更新 ${batchSelection.size} 项工作的开始提醒`, (current) => current.map((task) => batchSelection.has(task.id) ? { ...task, reminderMinutes, remindedAt: null } : task))
   }
   function batchSetEndReminder(value: string) {
     if (batchSelection.size === 0) return
     const endReminder = value === 'on'
-    setTasks((current) => current.map((task) => batchSelection.has(task.id) ? { ...task, endReminder, endRemindedAt: null } : task))
-    notify(`已更新 ${batchSelection.size} 项工作的结束提醒`)
+    commitTaskChange('批量结束提醒修改', `已更新 ${batchSelection.size} 项工作的结束提醒`, (current) => current.map((task) => batchSelection.has(task.id) ? { ...task, endReminder, endRemindedAt: null } : task))
   }
   function batchDelete() {
-    if (batchSelection.size === 0 || !window.confirm(`确定删除选中的 ${batchSelection.size} 项工作吗？此操作无法撤销。`)) return
-    const count = batchSelection.size; setTasks((current) => current.filter((task) => !batchSelection.has(task.id))); setBatchSelection(new Set()); notify(`已删除 ${count} 项工作`)
+    if (batchSelection.size === 0 || !window.confirm(`将选中的 ${batchSelection.size} 项工作移入回收站吗？`)) return
+    const count = batchSelection.size
+    const deletedAt = new Date().toISOString()
+    commitTaskChange('批量删除', `已将 ${count} 项工作移入回收站`, (current) => current.map((task) => batchSelection.has(task.id) ? { ...task, deletedAt } : task))
+    setBatchSelection(new Set())
+  }
+  function restoreTask(taskId: string) {
+    commitTaskChange('恢复工作', '工作已恢复', (current) => current.map((task) => task.id === taskId ? { ...task, deletedAt: null } : task))
+  }
+  function permanentlyDeleteTask(taskId: string) {
+    const task = trashedTasks.find((item) => item.id === taskId)
+    if (!task || !window.confirm(`永久删除“${task.title}”吗？此操作无法撤销。`)) return
+    const next = tasksRef.current.filter((item) => item.id !== taskId)
+    tasksRef.current = next
+    setUndoEntry(null)
+    setTasks(next)
+    setToast('工作已永久删除')
+  }
+  function emptyTrash() {
+    if (trashedTasks.length === 0 || !window.confirm(`永久删除回收站中的 ${trashedTasks.length} 项工作吗？此操作无法撤销。`)) return
+    const next = tasksRef.current.filter((task) => !task.deletedAt)
+    tasksRef.current = next
+    setUndoEntry(null)
+    setTasks(next)
+    setToast('回收站已清空')
   }
 
   function renderTimeline(days: Date[]) {
@@ -455,7 +519,7 @@ function App() {
   const totalMinutes = visibleTasks.reduce((sum, task) => sum + task.duration, 0)
   return <DndContext sensors={sensors} collisionDetection={pointerWithin} autoScroll={false} onDragStart={handleDragStart} onDragMove={handleDragMove} onDragEnd={handleDragEnd} onDragCancel={() => { setDraggingTaskId(null); setDragGuide(null); setDragPreviewOffsetY(0) }}>
     <div className="app-shell">
-      <header className="topbar"><div className="brand"><span className="brand-mark"><CalendarDays size={18} /></span><span>WorkGrid</span></div><div className="view-switcher" role="group" aria-label="日历视图">{(Object.keys(VIEW_LABELS) as ViewMode[]).map((mode) => <button key={mode} type="button" className={view === mode ? 'is-active' : ''} onClick={() => selectView(mode)}>{VIEW_LABELS[mode]}</button>)}</div><div className="date-controls"><InstallApp /><CloudSync tasks={tasks} setTasks={setTasks} onNotify={notify} /><DataManagement tasks={tasks} canUndoImport={canUndoImport} onImport={importTasks} onUndoImport={undoLastImport} onNotify={notify} /><span className="toolbar-divider" />{view !== 'today' && <><button className="icon-button" type="button" aria-label="上一周期" title="上一周期" onClick={() => setAnchor((date) => moveAnchor(date, view, -1))}><ChevronLeft size={18} /></button><button className="today-button" type="button" onClick={() => setAnchor(new Date())}>今天</button><button className="icon-button" type="button" aria-label="下一周期" title="下一周期" onClick={() => setAnchor((date) => moveAnchor(date, view, 1))}><ChevronRight size={18} /></button></>}</div></header>
+      <header className="topbar"><div className="brand"><span className="brand-mark"><CalendarDays size={18} /></span><span>WorkGrid</span></div><div className="view-switcher" role="group" aria-label="日历视图">{(Object.keys(VIEW_LABELS) as ViewMode[]).map((mode) => <button key={mode} type="button" className={view === mode ? 'is-active' : ''} onClick={() => selectView(mode)}>{VIEW_LABELS[mode]}</button>)}</div><div className="date-controls"><InstallApp /><CloudSync tasks={tasks} setTasks={replaceTasksFromExternal} onNotify={notify} /><DataManagement tasks={tasks} canUndoImport={canUndoImport} onImport={importTasks} onUndoImport={undoLastImport} onNotify={notify} /><button className="icon-button trash-button" type="button" aria-label={`回收站，${trashedTasks.length} 项`} title="回收站" onClick={() => setTrashOpen(true)}><Trash2 size={17} />{trashedTasks.length > 0 && <span>{trashedTasks.length > 99 ? '99+' : trashedTasks.length}</span>}</button><span className="toolbar-divider" />{view !== 'today' && <><button className="icon-button" type="button" aria-label="上一周期" title="上一周期" onClick={() => setAnchor((date) => moveAnchor(date, view, -1))}><ChevronLeft size={18} /></button><button className="today-button" type="button" onClick={() => setAnchor(new Date())}>今天</button><button className="icon-button" type="button" aria-label="下一周期" title="下一周期" onClick={() => setAnchor((date) => moveAnchor(date, view, 1))}><ChevronRight size={18} /></button></>}</div></header>
       <div className="workspace">
         <DroppableBacklog>
           <div className="panel-heading"><div><h1>待安排</h1><span>{unscheduled.length} 个方块</span></div>{selectedTask && !batchMode && <button className="clear-selection" type="button" onClick={() => setSelectedTaskId(null)}><X size={14} />取消选择</button>}</div>
@@ -472,13 +536,14 @@ function App() {
             <div className="search-field"><Search size={15} aria-hidden="true" /><input aria-label="搜索工作" placeholder="搜索工作或标签" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} /></div>
             <div className="filter-selects"><select aria-label="按状态筛选" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">全部状态</option><option value="todo">待办</option><option value="in-progress">进行中</option><option value="completed">已完成</option></select><select aria-label="按标签筛选" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}><option value="all">全部标签</option>{allTags.map((tag) => <option value={tag} key={tag}>{tag}</option>)}</select></div>
           </div>
-          <div className="task-list" aria-live="polite">{unscheduled.map((task) => <TaskCard key={task.id} task={task} selected={selectedTaskId === task.id} batchMode={batchMode} batchSelected={batchSelection.has(task.id)} onSelect={() => batchMode ? toggleBatchTask(task.id) : setSelectedTaskId((current) => current === task.id ? null : task.id)} onEdit={() => beginEdit(task)} />)}{unscheduled.length === 0 && <div className="empty-state"><Check size={20} /><span>{tasks.some((task) => !task.start) ? '没有匹配的工作' : '工作已全部安排'}</span></div>}</div>
+          <div className="task-list" aria-live="polite">{unscheduled.map((task) => <TaskCard key={task.id} task={task} selected={selectedTaskId === task.id} batchMode={batchMode} batchSelected={batchSelection.has(task.id)} onSelect={() => batchMode ? toggleBatchTask(task.id) : setSelectedTaskId((current) => current === task.id ? null : task.id)} onEdit={() => beginEdit(task)} />)}{unscheduled.length === 0 && <div className="empty-state"><Check size={20} /><span>{activeTasks.some((task) => !task.start) ? '没有匹配的工作' : '工作已全部安排'}</span></div>}</div>
         </DroppableBacklog>
         <main className="calendar-panel"><div className="calendar-heading"><div><h2>{viewTitle(view === 'today' ? today : anchor, view)}</h2><span>{view === 'today' ? '聚焦今天的工作执行' : format(anchor, 'yyyy 年', { locale: zhCN })}</span></div><div className="calendar-heading-actions">{view !== 'today' && <div className="work-total"><Clock3 size={15} />当前视图 {durationLabel(totalMinutes)}</div>}<button className={`secondary-button batch-toggle${batchMode ? ' is-active' : ''}`} type="button" onClick={toggleBatchMode}><ListChecks size={15} />{batchMode ? '退出批量' : '批量管理'}</button></div></div>{batchMode && <div className="batch-toolbar"><strong>已选择 {batchSelection.size} 项</strong><div className="batch-actions"><select aria-label="批量修改状态" defaultValue="" onChange={(event) => { if (event.target.value) batchSetStatus(event.target.value as TaskStatus); event.currentTarget.value = '' }}><option value="" disabled>修改状态</option><option value="todo">待办</option><option value="in-progress">进行中</option><option value="completed">已完成</option></select><select aria-label="批量修改颜色" defaultValue="" onChange={(event) => { if (event.target.value) batchSetColor(event.target.value as TaskColor); event.currentTarget.value = '' }}><option value="" disabled>修改颜色</option>{COLORS.map((color) => <option value={color.value} key={color.value}>{color.label}</option>)}</select><select aria-label="批量设置开始提醒" defaultValue="" onChange={(event) => { if (event.target.value) batchSetStartReminder(event.target.value); event.currentTarget.value = '' }}><option value="" disabled>开始提醒</option>{REMINDER_OPTIONS.map((option) => <option key={String(option.value)} value={option.value === null ? 'none' : option.value}>{option.label}</option>)}</select><select aria-label="批量设置结束提醒" defaultValue="" onChange={(event) => { if (event.target.value) batchSetEndReminder(event.target.value); event.currentTarget.value = '' }}><option value="" disabled>结束提醒</option><option value="on">开启</option><option value="off">关闭</option></select><input aria-label="批量添加标签" placeholder="添加标签" value={batchTags} onChange={(event) => setBatchTags(event.target.value)} /><button className="secondary-button" type="button" disabled={batchSelection.size === 0 || parseTags(batchTags).length === 0} onClick={batchSetTags}>添加标签</button><button className="danger-button batch-delete" type="button" disabled={batchSelection.size === 0} onClick={batchDelete}><Trash2 size={15} />删除</button></div></div>}{calendarBody()}</main>
       </div>
       {editingTaskId && <div className="modal-backdrop" role="presentation" onMouseDown={() => setEditingTaskId(null)}><section className="edit-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-title" onMouseDown={(event) => event.stopPropagation()}><div className="dialog-heading"><h2 id="edit-title">编辑工作方块</h2><button className="icon-button" type="button" aria-label="关闭" title="关闭" onClick={() => setEditingTaskId(null)}><X size={18} /></button></div><form onSubmit={saveEdit}><label htmlFor="edit-task-title">工作内容</label><input id="edit-task-title" autoFocus value={editingDraft.title} onChange={(event) => setEditingDraft((current) => ({ ...current, title: event.target.value }))} maxLength={60} /><label htmlFor="edit-start">开始时间</label><input id="edit-start" type="datetime-local" step="900" value={editingStart} onChange={(event) => setEditingStart(event.target.value)} /><label htmlFor="edit-reminder"><Bell size={13} />开始提醒</label><select id="edit-reminder" value={editingReminder === null ? 'none' : String(editingReminder)} disabled={!editingStart} onChange={(event) => { const value = event.target.value === 'none' ? null : Number(event.target.value); setEditingReminder(value); if (value !== null) setEditingEndReminder(true) }}>{REMINDER_OPTIONS.map((option) => <option key={String(option.value)} value={option.value === null ? 'none' : option.value}>{option.label}</option>)}</select><label className="end-reminder-toggle"><input type="checkbox" checked={editingEndReminder} disabled={!editingStart} onChange={(event) => setEditingEndReminder(event.target.checked)} /><span><strong>结束时提醒</strong><small>达到预计结束时间时再次通知</small></span></label>{(editingReminder !== null || editingEndReminder) && <small className="field-hint">{editingStart ? `${editingReminder !== null ? `${reminderLabel(editingReminder)}提醒` : '不在开始前提醒'}${editingEndReminder ? '，并在结束时提醒' : ''}` : '先设置开始时间才能启用提醒'}</small>}<label htmlFor="edit-tags">标签（逗号分隔）</label><input id="edit-tags" value={editingTags} onChange={(event) => setEditingTags(event.target.value)} placeholder="例如：客户，重要" maxLength={200} /><label htmlFor="edit-duration">预计时长（分钟）</label><input id="edit-duration" type="number" inputMode="numeric" min="1" max="720" step="1" required value={editingDuration} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setEditingDuration(event.target.value)} /><span className="dialog-label">状态</span><div className="status-switcher" role="group" aria-label="任务状态">{(['todo','in-progress','completed'] as TaskStatus[]).map((status) => <button key={status} type="button" className={editingStatus === status ? 'is-active' : ''} onClick={() => setEditingStatus(status)}>{status === 'todo' ? <Circle size={14} /> : status === 'in-progress' ? <Play size={14} /> : <CheckCircle2 size={14} />}{STATUS_LABELS[status]}</button>)}</div><span className="dialog-label">颜色</span><div className="color-picker" role="group" aria-label="方块颜色">{COLORS.map((color) => <button key={color.value} className={`color-swatch color-${color.value}`} type="button" aria-label={color.label} aria-pressed={editingDraft.color === color.value} onClick={() => setEditingDraft((current) => ({ ...current, color: color.value }))}>{editingDraft.color === color.value && <Check size={12} />}</button>)}</div><div className="dialog-actions">{tasks.find((task) => task.id === editingTaskId)?.start && <button className="secondary-button" type="button" onClick={() => { unscheduleTask(editingTaskId); setEditingTaskId(null) }}><RotateCcw size={16} />移回待安排</button>}<button className="danger-button" type="button" aria-label="删除工作方块" title="删除" onClick={deleteEditingTask}><Trash2 size={17} /></button><button className="primary-button" type="submit">保存</button></div></form></section></div>}
+      {trashOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setTrashOpen(false)}><section className="edit-dialog trash-dialog" role="dialog" aria-modal="true" aria-labelledby="trash-title" onMouseDown={(event) => event.stopPropagation()}><div className="dialog-heading"><div><h2 id="trash-title">回收站</h2><p>{trashedTasks.length} 项工作</p></div><button className="icon-button" type="button" aria-label="关闭回收站" title="关闭" onClick={() => setTrashOpen(false)}><X size={18} /></button></div>{trashedTasks.length === 0 ? <div className="trash-empty"><Trash2 size={22} /><span>回收站为空</span></div> : <><div className="trash-list">{trashedTasks.map((task) => <div className="trash-item" key={task.id}><div><strong>{task.title}</strong><small>{format(new Date(task.deletedAt!), 'yyyy-MM-dd HH:mm')} 删除</small></div><button className="secondary-button" type="button" onClick={() => restoreTask(task.id)}><RotateCcw size={14} />恢复</button><button className="danger-button" type="button" aria-label={`永久删除 ${task.title}`} title="永久删除" onClick={() => permanentlyDeleteTask(task.id)}><Trash2 size={15} /></button></div>)}</div><div className="dialog-actions trash-actions"><button className="danger-primary-button" type="button" onClick={emptyTrash}><Trash2 size={15} />清空回收站</button></div></>}</section></div>}
       {pendingSchedule && <div className="modal-backdrop" role="presentation" onMouseDown={() => setPendingSchedule(null)}><section className="edit-dialog reschedule-dialog" role="dialog" aria-modal="true" aria-labelledby="reschedule-title" onMouseDown={(event) => event.stopPropagation()}><div className="dialog-heading"><h2 id="reschedule-title">重新安排已完成任务</h2><button className="icon-button" type="button" aria-label="关闭" onClick={() => setPendingSchedule(null)}><X size={18} /></button></div><p>这个任务已经完成。移动到新时间后，是否将它重新打开为待办？</p><div className="dialog-actions"><button className="secondary-button" type="button" onClick={() => setPendingSchedule(null)}>取消</button><button className="secondary-button" type="button" onClick={() => { scheduleTask(pendingSchedule.taskId, pendingSchedule.slot, false); setPendingSchedule(null) }}>保持完成</button><button className="primary-button" type="button" onClick={() => { scheduleTask(pendingSchedule.taskId, pendingSchedule.slot, true); setPendingSchedule(null) }}>重新打开并移动</button></div></section></div>}
-      {toast && <div className="toast" role="status">{toast}</div>}
+      {toast && <div className="toast" role="status"><span>{toast}</span>{undoEntry && <button type="button" onClick={undoLastChange}>撤销</button>}</div>}
     </div>
     <DragOverlay dropAnimation={null}>{activeTask && <article className={`task-card drag-overlay color-${activeTask.color}`} style={{ '--drag-preview-offset-y': `${dragPreviewOffsetY}px` } as React.CSSProperties}><GripVertical className="drag-handle" size={15} /><div className="task-copy"><strong>{activeTask.title}</strong><span><Clock3 size={13} />{durationLabel(activeTask.duration)}</span></div></article>}</DragOverlay>
   </DndContext>

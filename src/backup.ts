@@ -1,9 +1,9 @@
 import type { Task, TaskColor, WorkGridBackup } from './types'
 
 export const BACKUP_FORMAT = 'workgrid-backup'
-export const BACKUP_SCHEMA_VERSION = 5
+export const BACKUP_SCHEMA_VERSION = 6
 export const MAX_BACKUP_BYTES = 5 * 1024 * 1024
-export const APP_VERSION = '0.9.0'
+export const APP_VERSION = '0.9.1'
 
 const COLORS: TaskColor[] = ['red', 'orange', 'yellow', 'green', 'blue', 'indigo', 'purple']
 
@@ -69,6 +69,7 @@ function validateTask(value: unknown, index: number): Task {
   const endReminder = value.endReminder ?? (reminderMinutes !== null)
   const endRemindedAt = value.endRemindedAt ?? null
   const tags = value.tags ?? []
+  const deletedAt = value.deletedAt ?? null
   if (status !== 'todo' && status !== 'in-progress' && status !== 'completed') {
     throw new BackupError(`第 ${index + 1} 个工作方块状态无效`)
   }
@@ -90,6 +91,9 @@ function validateTask(value: unknown, index: number): Task {
   if (!Array.isArray(tags) || tags.length > 8 || tags.some((tag) => typeof tag !== 'string' || tag.trim().length < 1 || tag.trim().length > 24)) {
     throw new BackupError(`第 ${index + 1} 个工作方块标签无效`)
   }
+  if (deletedAt !== null && !isIsoDate(deletedAt)) {
+    throw new BackupError(`第 ${index + 1} 个工作方块删除时间无效`)
+  }
 
   return {
     id,
@@ -105,6 +109,7 @@ function validateTask(value: unknown, index: number): Task {
     endReminder,
     endRemindedAt: endRemindedAt as string | null,
     tags: tags.map((tag) => tag.trim()).filter((tag, tagIndex, list) => list.indexOf(tag) === tagIndex),
+    deletedAt: deletedAt as string | null,
   }
 }
 
@@ -201,6 +206,7 @@ function tasksEqual(left: Task, right: Task) {
     && left.endReminder === right.endReminder
     && left.endRemindedAt === right.endRemindedAt
     && JSON.stringify(left.tags) === JSON.stringify(right.tags)
+    && left.deletedAt === right.deletedAt
 }
 
 function nextUniqueId(usedIds: Set<string>) {

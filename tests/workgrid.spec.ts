@@ -17,6 +17,7 @@ function task(overrides: Record<string, unknown> = {}) {
     endReminder: false,
     endRemindedAt: null,
     tags: [],
+    deletedAt: null,
     ...overrides,
   }
 }
@@ -151,6 +152,76 @@ test('tasks can be searched, filtered, edited, and batch tagged', async ({ page 
   await page.getByLabel('批量设置开始提醒').selectOption('15')
   await page.getByLabel('批量设置结束提醒').selectOption('on')
   await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]').every((item: { reminderMinutes: number; endReminder: boolean }) => item.reminderMinutes === 15 && item.endReminder), STORAGE_KEY)).toBe(true)
+})
+
+test('edit, scheduling, and batch changes can be undone', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
+  await seedTasks(page, [task({ title: '可撤销任务' })])
+  await page.goto('/')
+
+  await page.getByRole('button', { name: '编辑 可撤销任务' }).click()
+  const editDialog = page.getByRole('dialog', { name: '编辑工作方块' })
+  await editDialog.getByLabel('工作内容').fill('修改后的任务')
+  await editDialog.getByRole('button', { name: '保存', exact: true }).click()
+  await expect(page.locator('.task-card', { hasText: '修改后的任务' })).toBeVisible()
+  await page.getByRole('button', { name: '撤销', exact: true }).click()
+  await expect(page.locator('.task-card', { hasText: '可撤销任务' })).toBeVisible()
+
+  await page.locator('.task-card', { hasText: '可撤销任务' }).click()
+  await page.locator('.calendar-surface').evaluate((element) => { element.scrollTop = 36 * 22 - 120 })
+  await page.locator('.day-track').nth(0).locator('.drop-slot').nth(36).click()
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.start !== null, STORAGE_KEY)).toBe(true)
+  await page.getByRole('button', { name: '撤销', exact: true }).click()
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.start, STORAGE_KEY)).toBeNull()
+
+  await page.getByRole('button', { name: '批量管理' }).click()
+  await page.locator('.task-card', { hasText: '可撤销任务' }).click()
+  await page.getByLabel('批量修改颜色').selectOption('green')
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.color, STORAGE_KEY)).toBe('green')
+  await page.getByRole('button', { name: '撤销', exact: true }).click()
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.color, STORAGE_KEY)).toBe('blue')
+})
+
+test('trash supports undo, restore, permanent delete, and emptying', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
+  await seedTasks(page, [task({ id: 'first-task', title: '第一项' }), task({ id: 'second-task', title: '第二项' })])
+  await page.goto('/')
+
+  await page.getByRole('button', { name: '编辑 第一项' }).click()
+  await page.getByRole('button', { name: '删除工作方块' }).click()
+  await expect(page.locator('.task-card', { hasText: '第一项' })).toHaveCount(0)
+  await expect.poll(() => page.evaluate((key) => {
+    const item = JSON.parse(localStorage.getItem(key) ?? '[]').find((task: { id: string }) => task.id === 'first-task')
+    return Boolean(item?.deletedAt)
+  }, STORAGE_KEY)).toBe(true)
+  await expect(page.locator('.toast')).toContainText('已移入回收站')
+  await expect(page.getByRole('button', { name: '撤销', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '撤销', exact: true }).click()
+  await expect(page.locator('.task-card', { hasText: '第一项' })).toBeVisible()
+
+  await page.getByRole('button', { name: '编辑 第一项' }).click()
+  await page.getByRole('button', { name: '删除工作方块' }).click()
+  await page.getByRole('button', { name: /回收站，1 项/ }).click()
+  const trashDialog = page.getByRole('dialog', { name: '回收站' })
+  await trashDialog.locator('.trash-item', { hasText: '第一项' }).getByRole('button', { name: '恢复' }).click()
+  await expect(trashDialog.getByText('回收站为空')).toBeVisible()
+  await trashDialog.getByRole('button', { name: '关闭回收站' }).click()
+
+  await page.getByRole('button', { name: '批量管理' }).click()
+  await page.locator('.task-card', { hasText: '第一项' }).click()
+  await page.locator('.task-card', { hasText: '第二项' }).click()
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: '删除', exact: true }).click()
+  await page.getByRole('button', { name: /回收站，2 项/ }).click()
+  await expect(trashDialog.locator('.trash-item')).toHaveCount(2)
+
+  page.once('dialog', (dialog) => dialog.accept())
+  await trashDialog.getByRole('button', { name: '永久删除 第一项' }).click()
+  await expect(trashDialog.locator('.trash-item')).toHaveCount(1)
+  page.once('dialog', (dialog) => dialog.accept())
+  await trashDialog.getByRole('button', { name: '清空回收站' }).click()
+  await expect(trashDialog.getByText('回收站为空')).toBeVisible()
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]').length, STORAGE_KEY)).toBe(0)
 })
 
 test('desktop drag shows one preview and a guide matching the final start time', async ({ page }, testInfo) => {

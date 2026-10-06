@@ -19,16 +19,17 @@ const task = {
 const backup = createBackup([task])
 const parsed = parseBackupText(JSON.stringify(backup))
 assert.equal(parsed.taskCount, 1)
-assert.deepEqual(parsed.tasks[0], { ...task, status: 'todo', completedAt: null, reminderMinutes: null, remindedAt: null, endReminder: false, endRemindedAt: null, tags: [] })
+assert.deepEqual(parsed.tasks[0], { ...task, status: 'todo', completedAt: null, reminderMinutes: null, remindedAt: null, endReminder: false, endRemindedAt: null, tags: [], deletedAt: null })
 
 const versionOneBackup = { ...backup, schemaVersion: 1 }
 const migrated = parseBackupText(JSON.stringify(versionOneBackup))
-assert.equal(migrated.schemaVersion, 5)
+assert.equal(migrated.schemaVersion, 6)
 assert.equal(migrated.tasks[0].status, 'todo')
 assert.equal(migrated.tasks[0].completedAt, null)
 assert.equal(migrated.tasks[0].reminderMinutes, null)
 assert.equal(migrated.tasks[0].endReminder, false)
 assert.deepEqual(migrated.tasks[0].tags, [])
+assert.equal(migrated.tasks[0].deletedAt, null)
 
 for (const value of [
   '{',
@@ -65,6 +66,9 @@ assert.equal(completedRoundTrip.tasks[0].endRemindedAt, completedTask.endReminde
 
 const taggedTask = { ...task, id: 'task-tagged', tags: ['客户', '重要'] }
 assert.deepEqual(parseBackupText(JSON.stringify(createBackup([taggedTask]))).tasks[0].tags, ['客户', '重要'])
+
+const deletedTask = { ...task, id: 'task-deleted', deletedAt: '2026-10-04T09:00:00.000Z' }
+assert.equal(parseBackupText(JSON.stringify(createBackup([deletedTask]))).tasks[0].deletedAt, deletedTask.deletedAt)
 
 const reminderTask = {
   ...task,

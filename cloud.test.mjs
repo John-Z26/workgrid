@@ -15,6 +15,7 @@ const task = {
   endReminder: false,
   endRemindedAt: null,
   tags: [],
+  deletedAt: null,
 }
 
 const snapshot = parseCloudSnapshot({ tasks: [task], revision: 3, updated_at: '2026-10-05T01:00:00.000Z' })

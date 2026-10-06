@@ -3,7 +3,7 @@ import type { Task } from './types'
 export function dueReminderTasks(tasks: Task[], now = new Date()) {
   const nowMs = now.getTime()
   return tasks.filter((task) => {
-    if (!task.start || task.reminderMinutes === null || task.remindedAt || task.status === 'completed') return false
+    if (task.deletedAt || !task.start || task.reminderMinutes === null || task.remindedAt || task.status === 'completed') return false
     const startMs = Date.parse(task.start)
     const reminderMs = startMs - task.reminderMinutes * 60_000
     return nowMs >= reminderMs && nowMs < startMs + Math.max(task.duration, 15) * 60_000
@@ -13,7 +13,7 @@ export function dueReminderTasks(tasks: Task[], now = new Date()) {
 export function dueEndReminderTasks(tasks: Task[], now = new Date()) {
   const nowMs = now.getTime()
   return tasks.filter((task) => {
-    if (!task.start || !task.endReminder || task.endRemindedAt || task.status === 'completed') return false
+    if (task.deletedAt || !task.start || !task.endReminder || task.endRemindedAt || task.status === 'completed') return false
     const endMs = Date.parse(task.start) + task.duration * 60_000
     return nowMs >= endMs && nowMs < endMs + 15 * 60_000
   })
