@@ -340,9 +340,144 @@ test('cloud initialization can retry without losing local tasks', async ({ page 
   await expect(accountDialog.getByText('同步失败')).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('.task-card', { hasText: '离线保留工作' })).toBeVisible()
   connectionRestored = true
-  await accountDialog.getByRole('button', { name: '重试连接' }).click()
+  const choiceDialog = page.getByRole('dialog', { name: '选择首次同步数据' })
+  await page.waitForFunction(() => {
+    const headings = [...document.querySelectorAll('[role="dialog"] h2')]
+    const buttons = [...document.querySelectorAll('button')]
+    return headings.some((heading) => heading.textContent === '选择首次同步数据')
+      || buttons.some((button) => button.textContent?.includes('重试连接') && !button.disabled)
+  })
+  if (!await choiceDialog.isVisible()) {
+    await accountDialog.getByRole('button', { name: '重试连接' }).click()
+  }
 
-  await expect(page.getByRole('dialog', { name: '选择首次同步数据' })).toBeVisible()
+  await expect(choiceDialog).toBeVisible()
   expect(attempts).toBeGreaterThanOrEqual(2)
   await expect(page.locator('.task-card', { hasText: '离线保留工作' })).toBeVisible()
+})
+
+test('concurrent cloud changes pause syncing and require an explicit version choice', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
+  const baseTask = task({ id: 'base-task', title: '同步前任务' })
+  const remoteTask = task({ id: 'remote-task', title: '另一台设备的任务', color: 'purple' })
+  await seedTasks(page, [baseTask])
+  await seedCloudSession(page)
+  let getCount = 0
+  let patchCount = 0
+  await page.route('http://127.0.0.1:54321/rest/v1/workgrid_data**', async (route) => {
+    const method = route.request().method()
+    if (method === 'GET') {
+      getCount += 1
+      const snapshot = getCount === 1
+        ? { tasks: [baseTask], revision: 8, updated_at: '2026-10-05T05:00:00.000Z' }
+        : { tasks: [remoteTask], revision: 9, updated_at: '2026-10-05T05:01:00.000Z' }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot) })
+      return
+    }
+    if (method === 'PATCH') {
+      patchCount += 1
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+      return
+    }
+    await route.abort()
+  })
+  await page.goto('/')
+  await expect(page.locator('.task-card', { hasText: '同步前任务' })).toBeVisible()
+
+  await page.getByPlaceholder('输入工作内容').fill('本机新增任务')
+  await page.getByRole('button', { name: '创建工作方块' }).click()
+
+  const conflictDialog = page.getByRole('dialog', { name: '发现同步冲突' })
+  await expect(conflictDialog).toBeVisible({ timeout: 10_000 })
+  await expect(conflictDialog).toContainText('本机版本')
+  await expect(conflictDialog).toContainText('2 个工作方块')
+  await expect(conflictDialog).toContainText('云端版本')
+  await expect(page.locator('.task-card', { hasText: '本机新增任务' })).toBeVisible()
+  expect(patchCount).toBe(1)
+
+  await conflictDialog.getByRole('button', { name: '保留云端版本' }).click()
+  await expect(page.locator('.task-card', { hasText: '另一台设备的任务' })).toBeVisible()
+  await expect(page.locator('.task-card', { hasText: '本机新增任务' })).toHaveCount(0)
+})
+
+test('a cloud conflict can be resolved by keeping and uploading the local version', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
+  const baseTask = task({ id: 'local-base-task', title: '原有任务' })
+  const remoteTask = task({ id: 'newer-remote-task', title: '云端抢先修改' })
+  await seedTasks(page, [baseTask])
+  await seedCloudSession(page)
+  let getCount = 0
+  let patchCount = 0
+  let uploadedTasks: unknown[] = []
+  await page.route('http://127.0.0.1:54321/rest/v1/workgrid_data**', async (route) => {
+    const method = route.request().method()
+    if (method === 'GET') {
+      getCount += 1
+      const snapshot = getCount === 1
+        ? { tasks: [baseTask], revision: 11, updated_at: '2026-10-05T07:00:00.000Z' }
+        : { tasks: [remoteTask], revision: 12, updated_at: '2026-10-05T07:01:00.000Z' }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot) })
+      return
+    }
+    if (method === 'PATCH') {
+      patchCount += 1
+      if (patchCount === 1) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+        return
+      }
+      uploadedTasks = route.request().postDataJSON().tasks
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tasks: uploadedTasks, revision: 13, updated_at: '2026-10-05T07:02:00.000Z' }) })
+      return
+    }
+    await route.abort()
+  })
+  await page.goto('/')
+  await page.getByPlaceholder('输入工作内容').fill('需要保留的本机修改')
+  await page.getByRole('button', { name: '创建工作方块' }).click()
+
+  const conflictDialog = page.getByRole('dialog', { name: '发现同步冲突' })
+  await expect(conflictDialog).toBeVisible({ timeout: 10_000 })
+  await conflictDialog.getByRole('button', { name: '保留本机版本' }).click()
+
+  await expect(conflictDialog).toHaveCount(0)
+  await expect(page.locator('.task-card', { hasText: '需要保留的本机修改' })).toBeVisible()
+  await expect(page.locator('.task-card', { hasText: '云端抢先修改' })).toHaveCount(0)
+  expect(patchCount).toBe(2)
+  expect(uploadedTasks).toHaveLength(2)
+})
+
+test('deleting cloud data signs out without deleting local tasks', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
+  const localTask = task({ id: 'kept-local-task', title: '需要保留的本机任务' })
+  await seedTasks(page, [localTask])
+  await seedCloudSession(page)
+  let deleteCount = 0
+  await page.route('http://127.0.0.1:54321/rest/v1/workgrid_data**', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tasks: [localTask], revision: 3, updated_at: '2026-10-05T06:00:00.000Z' }) })
+      return
+    }
+    if (route.request().method() === 'DELETE') {
+      deleteCount += 1
+      await route.fulfill({ status: 204, body: '' })
+      return
+    }
+    await route.abort()
+  })
+  await page.route('http://127.0.0.1:54321/auth/v1/logout**', (route) => route.fulfill({ status: 204, body: '' }))
+  await page.goto('/')
+  await expect(page.locator('.task-card', { hasText: '需要保留的本机任务' })).toBeVisible()
+
+  await page.getByRole('button', { name: '云同步' }).click()
+  const accountDialog = page.getByRole('dialog', { name: '云同步' })
+  await accountDialog.getByRole('button', { name: '删除云端数据' }).click()
+  const confirmDialog = page.getByRole('dialog', { name: '删除云端数据？' })
+  await expect(confirmDialog).toContainText('本机日程不受影响')
+  await confirmDialog.getByRole('button', { name: '确认删除' }).click()
+
+  await expect(page.getByText('云端数据已删除，本机日程仍会保留')).toBeVisible()
+  await expect(page.locator('.task-card', { hasText: '需要保留的本机任务' })).toBeVisible()
+  expect(deleteCount).toBe(1)
+  await page.getByRole('button', { name: '云同步' }).click()
+  await expect(page.getByRole('dialog', { name: '云同步' }).getByRole('button', { name: '发送验证码' })).toBeVisible()
 })

@@ -33,10 +33,28 @@ export function cloudDataMatches(left: Task[], right: Task[]) {
   return taskFingerprint(left) === taskFingerprint(right)
 }
 
-export function shouldApplyCloudSnapshot(localTasks: Task[], lastCloudFingerprint: string | null, incomingTasks: Task[]) {
+export type IncomingCloudAction = 'unchanged' | 'apply-cloud' | 'conflict'
+
+export function classifyIncomingCloudSnapshot(localTasks: Task[], lastCloudFingerprint: string | null, incomingTasks: Task[]): IncomingCloudAction {
   const localFingerprint = taskFingerprint(localTasks)
   const incomingFingerprint = taskFingerprint(incomingTasks)
-  return localFingerprint === incomingFingerprint || localFingerprint === lastCloudFingerprint
+  if (localFingerprint === incomingFingerprint) return 'unchanged'
+  if (localFingerprint === lastCloudFingerprint) return 'apply-cloud'
+  return 'conflict'
+}
+
+export function shouldApplyCloudSnapshot(localTasks: Task[], lastCloudFingerprint: string | null, incomingTasks: Task[]) {
+  return classifyIncomingCloudSnapshot(localTasks, lastCloudFingerprint, incomingTasks) !== 'conflict'
+}
+
+export function cloudSyncErrorMessage(error: unknown) {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return '当前设备处于离线状态'
+  if (typeof error !== 'object' || error === null) return '云端服务暂时不可用'
+  const message = typeof (error as { message?: unknown }).message === 'string'
+    ? (error as { message: string }).message.trim()
+    : ''
+  if (/fetch|network|timeout/i.test(message)) return '网络连接异常'
+  return message ? `服务返回：${message}` : '云端服务暂时不可用'
 }
 
 export function loginErrorMessage(error: unknown) {

@@ -49,7 +49,7 @@ WorkGrid 0.5.2 的提醒在应用打开或保持运行时检查。开始提醒�
 
 ## 云同步
 
-WorkGrid 0.7.1 使用 Supabase 提供可选云同步。未登录时仍是完整的本机应用；用户可直接在当前页面输入邮箱中的 6 至 8 位验证码登录，邮件登录链接保留为备用。登录后，本机每次修改会自动同步，同一账户的其他设备会收到更新。断网时修改继续保存在浏览器，恢复网络后自动重试。
+WorkGrid 0.8.0 使用 Supabase 提供可选云同步。未登录时仍是完整的本机应用；用户可直接在当前页面输入邮箱中的 6 至 8 位验证码登录，邮件登录链接保留为备用。登录后，本机每次修改会自动同步，同一账户的其他设备会收到更新。断网时修改继续保存在浏览器，恢复网络后自动重试。多台设备同时修改时，应用会暂停同步并要求用户明确选择本机或云端版本，避免静默覆盖；账户面板也会显示待上传状态、失败原因，并允许删除云端数据而保留本机日程。
 
 云端表启用了行级权限，每位用户只能读取和修改自己的数据。导出备份仍然保留，建议定期下载独立备份。
 
@@ -57,7 +57,7 @@ WorkGrid 0.7.1 使用 Supabase 提供可选云同步。未登录时仍是完整�
 
 1. 在 Supabase 创建项目，在 SQL Editor 执行 `supabase/migrations/20261005000000_create_workgrid_data.sql`。
 2. 在 Authentication 的 URL Configuration 中，把 `https://zhoubx634.github.io/workgrid/` 加入 Redirect URLs。
-3. 在 Authentication 的 Emails 中修改 Magic Link 模板，同时加入 `{{ .Token }}` 验证码和 `{{ .ConfirmationURL }}` 登录链接，示例见 [Supabase 配置说明](supabase/README.md)。
+3. 在 Authentication 的 Email Templates 中同时修改 Confirm signup 和 Magic Link 模板，两者都加入 `{{ .Token }}` 验证码和 `{{ .ConfirmationURL }}` 登录链接，示例见 [Supabase 配置说明](supabase/README.md)。
 4. 在 GitHub 仓库的 Actions secrets 中添加 `VITE_SUPABASE_URL` 和 `VITE_SUPABASE_ANON_KEY`。
 5. 重新运行 GitHub Pages 工作流。Supabase 的 anon key 是网页客户端可用的公开密钥，安全隔离由数据库行级权限负责；不要使用 service role key。
 

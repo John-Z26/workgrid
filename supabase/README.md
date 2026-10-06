@@ -7,7 +7,7 @@
 
 ## Email code template
 
-WorkGrid accepts a 6-to-8-digit email code in the same browser and keeps the magic link as a fallback. In Authentication > Emails, edit the Magic Link template so the body includes both `{{ .Token }}` and `{{ .ConfirmationURL }}`. For example:
+WorkGrid accepts a 6-to-8-digit email code in the same browser and keeps the magic link as a fallback. In Authentication > Email Templates, edit both the **Confirm signup** and **Magic Link** templates so each body includes `{{ .Token }}` and `{{ .ConfirmationURL }}`. Supabase sends Confirm signup to a new address and Magic Link to an existing user, so changing only one template makes the behavior differ between users. For example:
 
 ```html
 <h2>登录 WorkGrid</h2>
@@ -17,6 +17,6 @@ WorkGrid accepts a 6-to-8-digit email code in the same browser and keeps the mag
 <p><a href="{{ .ConfirmationURL }}">也可以点击这里登录</a></p>
 ```
 
-Save the template before testing email-code login. Do not remove `{{ .ConfirmationURL }}` unless magic-link fallback is intentionally disabled.
+Save both templates before testing email-code login. Do not remove `{{ .ConfirmationURL }}` unless magic-link fallback is intentionally disabled.
 
 The browser must use only the publishable/anon key. Never expose the service role key. Row-level security in the migration restricts every row to its authenticated owner.
