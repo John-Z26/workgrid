@@ -16,6 +16,7 @@ function task(overrides: Record<string, unknown> = {}) {
     remindedAt: null,
     endReminder: false,
     endRemindedAt: null,
+    tags: [],
     ...overrides,
   }
 }
@@ -105,9 +106,51 @@ test('duration can be cleared and replaced with 56 minutes', async ({ page }, te
   await duration.fill('')
   await expect(duration).toHaveValue('')
   await duration.fill('56')
+  await page.getByLabel('标签（逗号分隔）').fill('客户，重要')
   await page.getByRole('button', { name: '创建工作方块' }).click()
 
   await expect(page.locator('.task-card', { hasText: '自由时长任务' })).toContainText('56 分钟')
+  await expect(page.locator('.task-card', { hasText: '自由时长任务' })).toContainText('客户')
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.tags, STORAGE_KEY)).toEqual(['客户', '重要'])
+})
+
+test('tasks can be searched, filtered, edited, and batch tagged', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
+  await seedTasks(page, [
+    task({ id: 'client-task', title: '客户方案', tags: ['客户'], status: 'todo' }),
+    task({ id: 'internal-task', title: '内部复盘', tags: ['内部'], status: 'completed', completedAt: '2026-10-05T03:00:00.000Z' }),
+  ])
+  await page.goto('/')
+
+  await page.getByLabel('搜索工作').fill('客户')
+  await expect(page.locator('.task-card', { hasText: '客户方案' })).toBeVisible()
+  await expect(page.locator('.task-card', { hasText: '内部复盘' })).toHaveCount(0)
+  await page.getByLabel('搜索工作').fill('')
+
+  await page.getByLabel('按状态筛选').selectOption('completed')
+  await expect(page.locator('.task-card', { hasText: '内部复盘' })).toBeVisible()
+  await expect(page.locator('.task-card', { hasText: '客户方案' })).toHaveCount(0)
+  await page.getByLabel('按状态筛选').selectOption('all')
+
+  await page.getByLabel('按标签筛选').selectOption('内部')
+  await expect(page.locator('.task-card', { hasText: '内部复盘' })).toBeVisible()
+  await page.getByLabel('按标签筛选').selectOption('all')
+
+  await page.getByRole('button', { name: '编辑 客户方案' }).click()
+  const editDialog = page.getByRole('dialog', { name: '编辑工作方块' })
+  await editDialog.getByLabel('标签（逗号分隔）').fill('客户, 重要')
+  await editDialog.getByRole('button', { name: '保存', exact: true }).click()
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]').find((item: { id: string }) => item.id === 'client-task')?.tags, STORAGE_KEY)).toEqual(['客户', '重要'])
+
+  await page.getByRole('button', { name: '批量管理' }).click()
+  await page.locator('.task-card', { hasText: '客户方案' }).click()
+  await page.locator('.task-card', { hasText: '内部复盘' }).click()
+  await page.getByLabel('批量添加标签').fill('本周')
+  await page.getByRole('button', { name: '添加标签', exact: true }).click()
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]').every((item: { tags: string[] }) => item.tags.includes('本周')), STORAGE_KEY)).toBe(true)
+  await page.getByLabel('批量设置开始提醒').selectOption('15')
+  await page.getByLabel('批量设置结束提醒').selectOption('on')
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]').every((item: { reminderMinutes: number; endReminder: boolean }) => item.reminderMinutes === 15 && item.endReminder), STORAGE_KEY)).toBe(true)
 })
 
 test('desktop drag shows one preview and a guide matching the final start time', async ({ page }, testInfo) => {

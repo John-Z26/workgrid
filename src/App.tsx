@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { DndContext, DragOverlay, MouseSensor, TouchSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from '@dnd-kit/core'
-import { Bell, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, Circle, Clock3, GripVertical, ListChecks, Pause, Pencil, Play, Plus, RotateCcw, Trash2, X } from 'lucide-react'
+import { Bell, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, Circle, Clock3, GripVertical, ListChecks, Pause, Pencil, Play, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react'
 import { addMinutes, format, isBefore, isSameDay, startOfDay } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { monthDays, monthLabel, moveAnchor, normalizeDropDate, taskIsVisible, taskStartsIn, viewTitle, weekDays } from './calendar'
@@ -23,7 +23,7 @@ const REMINDER_OPTIONS: Array<{ value: number | null; label: string }> = [
   { value: 10, label: '提前 10 分钟' }, { value: 15, label: '提前 15 分钟' }, { value: 30, label: '提前 30 分钟' },
   { value: 60, label: '提前 1 小时' }, { value: 1440, label: '提前 1 天' },
 ]
-const EMPTY_DRAFT: TaskDraft = { title: '', color: 'blue', duration: 60 }
+const EMPTY_DRAFT: TaskDraft = { title: '', color: 'blue', duration: 60, tags: [] }
 const SLOT_MINUTES = 15
 const SLOT_HEIGHT = 22
 const WORK_START = 0
@@ -34,6 +34,10 @@ function durationLabel(minutes: number) {
   if (minutes < 60) return `${minutes} 分钟`
   if (minutes % 60 === 0) return `${minutes / 60} 小时`
   return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟`
+}
+
+function parseTags(value: string) {
+  return [...new Set(value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean))].slice(0, 8).map((tag) => tag.slice(0, 24))
 }
 
 function toDateTimeLocal(value: string | null) {
@@ -65,7 +69,7 @@ function TaskCard({ task, selected, batchMode, batchSelected, onSelect, onEdit }
   return (
     <article ref={setNodeRef} className={`task-card color-${task.color}${selected ? ' is-selected' : ''}${batchSelected ? ' is-batch-selected' : ''}${isDragging ? ' is-dragging' : ''}`} onClick={onSelect} aria-label={`${task.title}，${durationLabel(task.duration)}`} {...attributes} {...(!batchMode ? listeners : {})}>
       {batchMode ? <SelectionMark selected={batchSelected} /> : <span className="drag-handle" title="拖动方块"><GripVertical size={15} aria-hidden="true" /></span>}
-      <div className="task-copy"><strong>{task.title}</strong><span><Clock3 size={13} />{durationLabel(task.duration)}</span></div>
+      <div className="task-copy"><strong>{task.title}</strong><span><Clock3 size={13} />{durationLabel(task.duration)}</span>{task.tags.length > 0 && <div className="task-tags">{task.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}</div>
       {!batchMode && <button className="icon-button task-edit" type="button" aria-label={`编辑 ${task.title}`} title="编辑任务" onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onTouchStart={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onEdit() }}><Pencil size={15} /></button>}
     </article>
   )
@@ -162,6 +166,7 @@ function App() {
   const [anchor, setAnchor] = useState(new Date())
   const [draft, setDraft] = useState<TaskDraft>(EMPTY_DRAFT)
   const [draftDuration, setDraftDuration] = useState('60')
+  const [draftTags, setDraftTags] = useState('')
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null)
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
@@ -171,6 +176,11 @@ function App() {
   const [editingStatus, setEditingStatus] = useState<TaskStatus>('todo')
   const [editingReminder, setEditingReminder] = useState<number | null>(null)
   const [editingEndReminder, setEditingEndReminder] = useState(false)
+  const [editingTags, setEditingTags] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [tagFilter, setTagFilter] = useState('all')
+  const [batchTags, setBatchTags] = useState('')
   const [resizePreview, setResizePreview] = useState<{ id: string; duration: number } | null>(null)
   const [pendingSchedule, setPendingSchedule] = useState<{ taskId: string; slot: Date } | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -230,14 +240,21 @@ function App() {
     return () => window.clearInterval(timer)
   }, [tasks])
 
-  const unscheduled = useMemo(() => tasks.filter((task) => !task.start), [tasks])
-  const visibleTasks = useMemo(() => tasks.filter((task) => taskIsVisible(task, anchor, view)), [tasks, anchor, view])
+  const filteredTasks = useMemo(() => tasks.filter((task) => {
+    const query = searchQuery.trim().toLocaleLowerCase()
+    return (!query || task.title.toLocaleLowerCase().includes(query) || task.tags.some((tag) => tag.toLocaleLowerCase().includes(query)))
+      && (statusFilter === 'all' || task.status === statusFilter)
+      && (tagFilter === 'all' || task.tags.includes(tagFilter))
+  }), [tasks, searchQuery, statusFilter, tagFilter])
+  const unscheduled = useMemo(() => filteredTasks.filter((task) => !task.start), [filteredTasks])
+  const visibleTasks = useMemo(() => filteredTasks.filter((task) => taskIsVisible(task, anchor, view)), [filteredTasks, anchor, view])
+  const allTags = useMemo(() => [...new Set(tasks.flatMap((task) => task.tags))].sort((a, b) => a.localeCompare(b, 'zh-CN')), [tasks])
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null
   const activeTask = tasks.find((task) => task.id === draggingTaskId) ?? null
   const today = startOfDay(new Date())
-  const todayTasks = tasks.filter((task) => task.start && isSameDay(new Date(task.start), today))
+  const todayTasks = filteredTasks.filter((task) => task.start && isSameDay(new Date(task.start), today))
   const completedTodayTasks = todayTasks.filter((task) => task.status === 'completed')
-  const overdueTasks = tasks.filter((task) => task.start && isBefore(new Date(task.start), today) && task.status !== 'completed')
+  const overdueTasks = filteredTasks.filter((task) => task.start && isBefore(new Date(task.start), today) && task.status !== 'completed')
 
   function notify(message: string) { setToast(message) }
   function selectView(next: ViewMode) { setView(next); if (next === 'today') setAnchor(new Date()) }
@@ -253,8 +270,8 @@ function App() {
     event.preventDefault(); const title = draft.title.trim(); if (!title) return
     const duration = parseDurationInput(draftDuration)
     if (duration === null) { notify('预计时长应为 1 至 720 的整数分钟'); return }
-    setTasks((current) => [{ id: makeId(), title, color: draft.color, duration, start: null, createdAt: new Date().toISOString(), status: 'todo', completedAt: null, reminderMinutes: null, remindedAt: null, endReminder: false, endRemindedAt: null }, ...current])
-    setDraft((current) => ({ ...current, title: '', duration })); setDraftDuration(String(duration)); notify('已创建工作方块')
+    setTasks((current) => [{ id: makeId(), title, color: draft.color, duration, start: null, createdAt: new Date().toISOString(), status: 'todo', completedAt: null, reminderMinutes: null, remindedAt: null, endReminder: false, endRemindedAt: null, tags: parseTags(draftTags) }, ...current])
+    setDraft((current) => ({ ...current, title: '', duration, tags: [] })); setDraftDuration(String(duration)); setDraftTags(''); notify('已创建工作方块')
   }
   function scheduleTask(taskId: string, slot: Date, reopenCompleted?: boolean) {
     const normalized = normalizeDropDate(slot, view)
@@ -311,7 +328,7 @@ function App() {
     }
   }
   function beginEdit(task: Task) {
-    setEditingTaskId(task.id); setEditingDraft({ title: task.title, color: task.color, duration: task.duration }); setEditingDuration(String(task.duration))
+    setEditingTaskId(task.id); setEditingDraft({ title: task.title, color: task.color, duration: task.duration, tags: task.tags }); setEditingTags(task.tags.join(', ')); setEditingDuration(String(task.duration))
     setEditingStart(toDateTimeLocal(task.start)); setEditingStatus(task.status); setEditingReminder(task.reminderMinutes); setEditingEndReminder(task.endReminder)
   }
   async function saveEdit(event: React.FormEvent) {
@@ -327,7 +344,7 @@ function App() {
       const start = fromDateTimeLocal(editingStart)
       const startReminderChanged = start !== task.start || editingReminder !== task.reminderMinutes
       const endReminderChanged = start !== task.start || duration !== task.duration || editingEndReminder !== task.endReminder
-      return { ...task, ...editingDraft, duration, title: editingDraft.title.trim(), start, status: editingStatus, completedAt: editingStatus === 'completed' ? task.completedAt ?? new Date().toISOString() : null, reminderMinutes: editingReminder, remindedAt: startReminderChanged ? null : task.remindedAt, endReminder: editingEndReminder, endRemindedAt: endReminderChanged ? null : task.endRemindedAt }
+      return { ...task, ...editingDraft, tags: parseTags(editingTags), duration, title: editingDraft.title.trim(), start, status: editingStatus, completedAt: editingStatus === 'completed' ? task.completedAt ?? new Date().toISOString() : null, reminderMinutes: editingReminder, remindedAt: startReminderChanged ? null : task.remindedAt, endReminder: editingEndReminder, endRemindedAt: endReminderChanged ? null : task.endRemindedAt }
     }))
     setEditingTaskId(null); notify((editingReminder !== null || editingEndReminder) && editingStart && (!('Notification' in window) || Notification.permission !== 'granted') ? '修改已保存，将使用应用内提醒' : '修改已保存')
   }
@@ -380,6 +397,25 @@ function App() {
     if (batchSelection.size === 0) return
     setTasks((current) => current.map((task) => batchSelection.has(task.id) ? { ...task, color } : task)); notify(`已更新 ${batchSelection.size} 项工作的颜色`)
   }
+  function batchSetTags() {
+    const tags = parseTags(batchTags)
+    if (batchSelection.size === 0 || tags.length === 0) return
+    setTasks((current) => current.map((task) => batchSelection.has(task.id) ? { ...task, tags: [...new Set([...task.tags, ...tags])].slice(0, 8) } : task))
+    notify(`已为 ${batchSelection.size} 项工作添加标签`)
+    setBatchTags('')
+  }
+  function batchSetStartReminder(value: string) {
+    if (batchSelection.size === 0) return
+    const reminderMinutes = value === 'none' ? null : Number(value)
+    setTasks((current) => current.map((task) => batchSelection.has(task.id) ? { ...task, reminderMinutes, remindedAt: null } : task))
+    notify(`已更新 ${batchSelection.size} 项工作的开始提醒`)
+  }
+  function batchSetEndReminder(value: string) {
+    if (batchSelection.size === 0) return
+    const endReminder = value === 'on'
+    setTasks((current) => current.map((task) => batchSelection.has(task.id) ? { ...task, endReminder, endRemindedAt: null } : task))
+    notify(`已更新 ${batchSelection.size} 项工作的结束提醒`)
+  }
   function batchDelete() {
     if (batchSelection.size === 0 || !window.confirm(`确定删除选中的 ${batchSelection.size} 项工作吗？此操作无法撤销。`)) return
     const count = batchSelection.size; setTasks((current) => current.filter((task) => !batchSelection.has(task.id))); setBatchSelection(new Set()); notify(`已删除 ${count} 项工作`)
@@ -392,7 +428,7 @@ function App() {
       {days.map((day) => <div className={`day-heading${isSameDay(day, new Date()) ? ' is-today' : ''}`} key={`heading-${day.toISOString()}`}><span>{format(day, 'EEE', { locale: zhCN })}</span><strong>{format(day, 'd')}</strong></div>)}
       <div className="time-rail">{Array.from({ length: WORK_END - WORK_START + 1 }, (_, index) => <span key={index} style={{ top: index * SLOT_HEIGHT * 4 }}>{String(WORK_START + index).padStart(2, '0')}:00</span>)}</div>
       {days.map((day) => {
-        const layout = layoutDayTasks(tasks.filter((task) => task.start && isSameDay(new Date(task.start), day)), resizePreview)
+        const layout = layoutDayTasks(filteredTasks.filter((task) => task.start && isSameDay(new Date(task.start), day)), resizePreview)
         return <DroppableDayTrack day={day} guide={dragGuide} key={day.toISOString()}><div className="drop-slots">{slots.map((slotIndex) => { const slot = new Date(day); slot.setHours(WORK_START, slotIndex * SLOT_MINUTES, 0, 0); return <TimeSlot key={slotIndex} slot={slot} onClick={() => selectedTaskId && scheduleTask(selectedTaskId, slot)} /> })}</div><div className="event-layer">{layout.map((item) => <CalendarEvent key={item.task.id} item={item} duration={resizePreview?.id === item.task.id ? resizePreview.duration : item.task.duration} batchMode={batchMode} batchSelected={batchSelection.has(item.task.id)} onOpen={() => beginEdit(item.task)} onToggleBatch={() => toggleBatchTask(item.task.id)} onStatus={(status) => updateStatus(item.task.id, status)} onResize={(event) => startResize(event, item.task)} />)}</div></DroppableDayTrack>
       })}
     </div>
@@ -400,7 +436,7 @@ function App() {
   function renderMonth() {
     const days = monthDays(anchor)
     return <div className="month-view"><div className="month-weekdays">{['一','二','三','四','五','六','日'].map((day) => <span key={day}>周{day}</span>)}</div><div className="month-grid">{days.map((day) => {
-      const label = monthLabel(day, anchor); const dayTasks = tasks.filter((task) => taskStartsIn(task, day, 'month'))
+      const label = monthLabel(day, anchor); const dayTasks = filteredTasks.filter((task) => taskStartsIn(task, day, 'month'))
       return <MonthCell day={day} className={`month-cell${label.isOutside ? ' is-outside' : ''}${isSameDay(day, new Date()) ? ' is-today' : ''}`} key={day.toISOString()} onSchedule={() => selectedTaskId && scheduleTask(selectedTaskId, day)}><span className="month-date">{label.day}</span><div className="month-events">{dayTasks.slice(0, 3).map((task) => <MonthEvent key={task.id} task={task} batchMode={batchMode} batchSelected={batchSelection.has(task.id)} onOpen={() => beginEdit(task)} onToggleBatch={() => toggleBatchTask(task.id)} />)}{dayTasks.length > 3 && <button type="button" className="more-events" onClick={(event) => { event.stopPropagation(); setAnchor(day); setView('day') }}>+{dayTasks.length - 3} 项</button>}</div></MonthCell>
     })}</div></div>
   }
@@ -421,10 +457,26 @@ function App() {
     <div className="app-shell">
       <header className="topbar"><div className="brand"><span className="brand-mark"><CalendarDays size={18} /></span><span>WorkGrid</span></div><div className="view-switcher" role="group" aria-label="日历视图">{(Object.keys(VIEW_LABELS) as ViewMode[]).map((mode) => <button key={mode} type="button" className={view === mode ? 'is-active' : ''} onClick={() => selectView(mode)}>{VIEW_LABELS[mode]}</button>)}</div><div className="date-controls"><InstallApp /><CloudSync tasks={tasks} setTasks={setTasks} onNotify={notify} /><DataManagement tasks={tasks} canUndoImport={canUndoImport} onImport={importTasks} onUndoImport={undoLastImport} onNotify={notify} /><span className="toolbar-divider" />{view !== 'today' && <><button className="icon-button" type="button" aria-label="上一周期" title="上一周期" onClick={() => setAnchor((date) => moveAnchor(date, view, -1))}><ChevronLeft size={18} /></button><button className="today-button" type="button" onClick={() => setAnchor(new Date())}>今天</button><button className="icon-button" type="button" aria-label="下一周期" title="下一周期" onClick={() => setAnchor((date) => moveAnchor(date, view, 1))}><ChevronRight size={18} /></button></>}</div></header>
       <div className="workspace">
-        <DroppableBacklog><div className="panel-heading"><div><h1>待安排</h1><span>{unscheduled.length} 个方块</span></div>{selectedTask && !batchMode && <button className="clear-selection" type="button" onClick={() => setSelectedTaskId(null)}><X size={14} />取消选择</button>}</div><form className="task-form" onSubmit={createTask}><label className="sr-only" htmlFor="task-title">工作内容</label><div className="input-row"><input id="task-title" value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder="输入工作内容" maxLength={60} /><button className="primary-icon-button" type="submit" aria-label="创建工作方块" title="创建工作方块"><Plus size={18} /></button></div><label className="field-label" htmlFor="task-duration">预计时长（分钟）</label><input className="duration-input" id="task-duration" type="number" inputMode="numeric" min="1" max="720" step="1" required value={draftDuration} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setDraftDuration(event.target.value)} /><div className="color-field"><span className="field-label">颜色</span><div className="color-picker" role="group" aria-label="方块颜色">{COLORS.map((color) => <button key={color.value} className={`color-swatch color-${color.value}`} type="button" aria-label={color.label} aria-pressed={draft.color === color.value} title={color.label} onClick={() => setDraft((current) => ({ ...current, color: color.value }))}>{draft.color === color.value && <Check size={12} />}</button>)}</div></div></form><div className="task-list" aria-live="polite">{unscheduled.map((task) => <TaskCard key={task.id} task={task} selected={selectedTaskId === task.id} batchMode={batchMode} batchSelected={batchSelection.has(task.id)} onSelect={() => batchMode ? toggleBatchTask(task.id) : setSelectedTaskId((current) => current === task.id ? null : task.id)} onEdit={() => beginEdit(task)} />)}{unscheduled.length === 0 && <div className="empty-state"><Check size={20} /><span>工作已全部安排</span></div>}</div></DroppableBacklog>
-        <main className="calendar-panel"><div className="calendar-heading"><div><h2>{viewTitle(view === 'today' ? today : anchor, view)}</h2><span>{view === 'today' ? '聚焦今天的工作执行' : format(anchor, 'yyyy 年', { locale: zhCN })}</span></div><div className="calendar-heading-actions">{view !== 'today' && <div className="work-total"><Clock3 size={15} />当前视图 {durationLabel(totalMinutes)}</div>}<button className={`secondary-button batch-toggle${batchMode ? ' is-active' : ''}`} type="button" onClick={toggleBatchMode}><ListChecks size={15} />{batchMode ? '退出批量' : '批量管理'}</button></div></div>{batchMode && <div className="batch-toolbar"><strong>已选择 {batchSelection.size} 项</strong><div className="batch-actions"><select aria-label="批量修改状态" defaultValue="" onChange={(event) => { if (event.target.value) batchSetStatus(event.target.value as TaskStatus); event.currentTarget.value = '' }}><option value="" disabled>修改状态</option><option value="todo">待办</option><option value="in-progress">进行中</option><option value="completed">已完成</option></select><select aria-label="批量修改颜色" defaultValue="" onChange={(event) => { if (event.target.value) batchSetColor(event.target.value as TaskColor); event.currentTarget.value = '' }}><option value="" disabled>修改颜色</option>{COLORS.map((color) => <option value={color.value} key={color.value}>{color.label}</option>)}</select><button className="danger-button batch-delete" type="button" disabled={batchSelection.size === 0} onClick={batchDelete}><Trash2 size={15} />删除</button></div></div>}{calendarBody()}</main>
+        <DroppableBacklog>
+          <div className="panel-heading"><div><h1>待安排</h1><span>{unscheduled.length} 个方块</span></div>{selectedTask && !batchMode && <button className="clear-selection" type="button" onClick={() => setSelectedTaskId(null)}><X size={14} />取消选择</button>}</div>
+          <form className="task-form" onSubmit={createTask}>
+            <label className="sr-only" htmlFor="task-title">工作内容</label>
+            <div className="input-row"><input id="task-title" value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder="输入工作内容" maxLength={60} /><button className="primary-icon-button" type="submit" aria-label="创建工作方块" title="创建工作方块"><Plus size={18} /></button></div>
+            <label className="field-label" htmlFor="task-duration">预计时长（分钟）</label>
+            <input className="duration-input" id="task-duration" type="number" inputMode="numeric" min="1" max="720" step="1" required value={draftDuration} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setDraftDuration(event.target.value)} />
+            <label className="field-label" htmlFor="task-tags">标签（逗号分隔）</label>
+            <input id="task-tags" value={draftTags} onChange={(event) => setDraftTags(event.target.value)} placeholder="例如：客户，重要" maxLength={200} />
+            <div className="color-field"><span className="field-label">颜色</span><div className="color-picker" role="group" aria-label="方块颜色">{COLORS.map((color) => <button key={color.value} className={`color-swatch color-${color.value}`} type="button" aria-label={color.label} aria-pressed={draft.color === color.value} title={color.label} onClick={() => setDraft((current) => ({ ...current, color: color.value }))}>{draft.color === color.value && <Check size={12} />}</button>)}</div></div>
+          </form>
+          <div className="filter-bar">
+            <div className="search-field"><Search size={15} aria-hidden="true" /><input aria-label="搜索工作" placeholder="搜索工作或标签" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} /></div>
+            <div className="filter-selects"><select aria-label="按状态筛选" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">全部状态</option><option value="todo">待办</option><option value="in-progress">进行中</option><option value="completed">已完成</option></select><select aria-label="按标签筛选" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}><option value="all">全部标签</option>{allTags.map((tag) => <option value={tag} key={tag}>{tag}</option>)}</select></div>
+          </div>
+          <div className="task-list" aria-live="polite">{unscheduled.map((task) => <TaskCard key={task.id} task={task} selected={selectedTaskId === task.id} batchMode={batchMode} batchSelected={batchSelection.has(task.id)} onSelect={() => batchMode ? toggleBatchTask(task.id) : setSelectedTaskId((current) => current === task.id ? null : task.id)} onEdit={() => beginEdit(task)} />)}{unscheduled.length === 0 && <div className="empty-state"><Check size={20} /><span>{tasks.some((task) => !task.start) ? '没有匹配的工作' : '工作已全部安排'}</span></div>}</div>
+        </DroppableBacklog>
+        <main className="calendar-panel"><div className="calendar-heading"><div><h2>{viewTitle(view === 'today' ? today : anchor, view)}</h2><span>{view === 'today' ? '聚焦今天的工作执行' : format(anchor, 'yyyy 年', { locale: zhCN })}</span></div><div className="calendar-heading-actions">{view !== 'today' && <div className="work-total"><Clock3 size={15} />当前视图 {durationLabel(totalMinutes)}</div>}<button className={`secondary-button batch-toggle${batchMode ? ' is-active' : ''}`} type="button" onClick={toggleBatchMode}><ListChecks size={15} />{batchMode ? '退出批量' : '批量管理'}</button></div></div>{batchMode && <div className="batch-toolbar"><strong>已选择 {batchSelection.size} 项</strong><div className="batch-actions"><select aria-label="批量修改状态" defaultValue="" onChange={(event) => { if (event.target.value) batchSetStatus(event.target.value as TaskStatus); event.currentTarget.value = '' }}><option value="" disabled>修改状态</option><option value="todo">待办</option><option value="in-progress">进行中</option><option value="completed">已完成</option></select><select aria-label="批量修改颜色" defaultValue="" onChange={(event) => { if (event.target.value) batchSetColor(event.target.value as TaskColor); event.currentTarget.value = '' }}><option value="" disabled>修改颜色</option>{COLORS.map((color) => <option value={color.value} key={color.value}>{color.label}</option>)}</select><select aria-label="批量设置开始提醒" defaultValue="" onChange={(event) => { if (event.target.value) batchSetStartReminder(event.target.value); event.currentTarget.value = '' }}><option value="" disabled>开始提醒</option>{REMINDER_OPTIONS.map((option) => <option key={String(option.value)} value={option.value === null ? 'none' : option.value}>{option.label}</option>)}</select><select aria-label="批量设置结束提醒" defaultValue="" onChange={(event) => { if (event.target.value) batchSetEndReminder(event.target.value); event.currentTarget.value = '' }}><option value="" disabled>结束提醒</option><option value="on">开启</option><option value="off">关闭</option></select><input aria-label="批量添加标签" placeholder="添加标签" value={batchTags} onChange={(event) => setBatchTags(event.target.value)} /><button className="secondary-button" type="button" disabled={batchSelection.size === 0 || parseTags(batchTags).length === 0} onClick={batchSetTags}>添加标签</button><button className="danger-button batch-delete" type="button" disabled={batchSelection.size === 0} onClick={batchDelete}><Trash2 size={15} />删除</button></div></div>}{calendarBody()}</main>
       </div>
-      {editingTaskId && <div className="modal-backdrop" role="presentation" onMouseDown={() => setEditingTaskId(null)}><section className="edit-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-title" onMouseDown={(event) => event.stopPropagation()}><div className="dialog-heading"><h2 id="edit-title">编辑工作方块</h2><button className="icon-button" type="button" aria-label="关闭" title="关闭" onClick={() => setEditingTaskId(null)}><X size={18} /></button></div><form onSubmit={saveEdit}><label htmlFor="edit-task-title">工作内容</label><input id="edit-task-title" autoFocus value={editingDraft.title} onChange={(event) => setEditingDraft((current) => ({ ...current, title: event.target.value }))} maxLength={60} /><label htmlFor="edit-start">开始时间</label><input id="edit-start" type="datetime-local" step="900" value={editingStart} onChange={(event) => setEditingStart(event.target.value)} /><label htmlFor="edit-reminder"><Bell size={13} />开始提醒</label><select id="edit-reminder" value={editingReminder === null ? 'none' : String(editingReminder)} disabled={!editingStart} onChange={(event) => { const value = event.target.value === 'none' ? null : Number(event.target.value); setEditingReminder(value); if (value !== null) setEditingEndReminder(true) }}>{REMINDER_OPTIONS.map((option) => <option key={String(option.value)} value={option.value === null ? 'none' : option.value}>{option.label}</option>)}</select><label className="end-reminder-toggle"><input type="checkbox" checked={editingEndReminder} disabled={!editingStart} onChange={(event) => setEditingEndReminder(event.target.checked)} /><span><strong>结束时提醒</strong><small>达到预计结束时间时再次通知</small></span></label>{(editingReminder !== null || editingEndReminder) && <small className="field-hint">{editingStart ? `${editingReminder !== null ? `${reminderLabel(editingReminder)}提醒` : '不在开始前提醒'}${editingEndReminder ? '，并在结束时提醒' : ''}` : '先设置开始时间才能启用提醒'}</small>}<label htmlFor="edit-duration">预计时长（分钟）</label><input id="edit-duration" type="number" inputMode="numeric" min="1" max="720" step="1" required value={editingDuration} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setEditingDuration(event.target.value)} /><span className="dialog-label">状态</span><div className="status-switcher" role="group" aria-label="任务状态">{(['todo','in-progress','completed'] as TaskStatus[]).map((status) => <button key={status} type="button" className={editingStatus === status ? 'is-active' : ''} onClick={() => setEditingStatus(status)}>{status === 'todo' ? <Circle size={14} /> : status === 'in-progress' ? <Play size={14} /> : <CheckCircle2 size={14} />}{STATUS_LABELS[status]}</button>)}</div><span className="dialog-label">颜色</span><div className="color-picker" role="group" aria-label="方块颜色">{COLORS.map((color) => <button key={color.value} className={`color-swatch color-${color.value}`} type="button" aria-label={color.label} aria-pressed={editingDraft.color === color.value} onClick={() => setEditingDraft((current) => ({ ...current, color: color.value }))}>{editingDraft.color === color.value && <Check size={12} />}</button>)}</div><div className="dialog-actions">{tasks.find((task) => task.id === editingTaskId)?.start && <button className="secondary-button" type="button" onClick={() => { unscheduleTask(editingTaskId); setEditingTaskId(null) }}><RotateCcw size={16} />移回待安排</button>}<button className="danger-button" type="button" aria-label="删除工作方块" title="删除" onClick={deleteEditingTask}><Trash2 size={17} /></button><button className="primary-button" type="submit">保存</button></div></form></section></div>}
+      {editingTaskId && <div className="modal-backdrop" role="presentation" onMouseDown={() => setEditingTaskId(null)}><section className="edit-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-title" onMouseDown={(event) => event.stopPropagation()}><div className="dialog-heading"><h2 id="edit-title">编辑工作方块</h2><button className="icon-button" type="button" aria-label="关闭" title="关闭" onClick={() => setEditingTaskId(null)}><X size={18} /></button></div><form onSubmit={saveEdit}><label htmlFor="edit-task-title">工作内容</label><input id="edit-task-title" autoFocus value={editingDraft.title} onChange={(event) => setEditingDraft((current) => ({ ...current, title: event.target.value }))} maxLength={60} /><label htmlFor="edit-start">开始时间</label><input id="edit-start" type="datetime-local" step="900" value={editingStart} onChange={(event) => setEditingStart(event.target.value)} /><label htmlFor="edit-reminder"><Bell size={13} />开始提醒</label><select id="edit-reminder" value={editingReminder === null ? 'none' : String(editingReminder)} disabled={!editingStart} onChange={(event) => { const value = event.target.value === 'none' ? null : Number(event.target.value); setEditingReminder(value); if (value !== null) setEditingEndReminder(true) }}>{REMINDER_OPTIONS.map((option) => <option key={String(option.value)} value={option.value === null ? 'none' : option.value}>{option.label}</option>)}</select><label className="end-reminder-toggle"><input type="checkbox" checked={editingEndReminder} disabled={!editingStart} onChange={(event) => setEditingEndReminder(event.target.checked)} /><span><strong>结束时提醒</strong><small>达到预计结束时间时再次通知</small></span></label>{(editingReminder !== null || editingEndReminder) && <small className="field-hint">{editingStart ? `${editingReminder !== null ? `${reminderLabel(editingReminder)}提醒` : '不在开始前提醒'}${editingEndReminder ? '，并在结束时提醒' : ''}` : '先设置开始时间才能启用提醒'}</small>}<label htmlFor="edit-tags">标签（逗号分隔）</label><input id="edit-tags" value={editingTags} onChange={(event) => setEditingTags(event.target.value)} placeholder="例如：客户，重要" maxLength={200} /><label htmlFor="edit-duration">预计时长（分钟）</label><input id="edit-duration" type="number" inputMode="numeric" min="1" max="720" step="1" required value={editingDuration} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setEditingDuration(event.target.value)} /><span className="dialog-label">状态</span><div className="status-switcher" role="group" aria-label="任务状态">{(['todo','in-progress','completed'] as TaskStatus[]).map((status) => <button key={status} type="button" className={editingStatus === status ? 'is-active' : ''} onClick={() => setEditingStatus(status)}>{status === 'todo' ? <Circle size={14} /> : status === 'in-progress' ? <Play size={14} /> : <CheckCircle2 size={14} />}{STATUS_LABELS[status]}</button>)}</div><span className="dialog-label">颜色</span><div className="color-picker" role="group" aria-label="方块颜色">{COLORS.map((color) => <button key={color.value} className={`color-swatch color-${color.value}`} type="button" aria-label={color.label} aria-pressed={editingDraft.color === color.value} onClick={() => setEditingDraft((current) => ({ ...current, color: color.value }))}>{editingDraft.color === color.value && <Check size={12} />}</button>)}</div><div className="dialog-actions">{tasks.find((task) => task.id === editingTaskId)?.start && <button className="secondary-button" type="button" onClick={() => { unscheduleTask(editingTaskId); setEditingTaskId(null) }}><RotateCcw size={16} />移回待安排</button>}<button className="danger-button" type="button" aria-label="删除工作方块" title="删除" onClick={deleteEditingTask}><Trash2 size={17} /></button><button className="primary-button" type="submit">保存</button></div></form></section></div>}
       {pendingSchedule && <div className="modal-backdrop" role="presentation" onMouseDown={() => setPendingSchedule(null)}><section className="edit-dialog reschedule-dialog" role="dialog" aria-modal="true" aria-labelledby="reschedule-title" onMouseDown={(event) => event.stopPropagation()}><div className="dialog-heading"><h2 id="reschedule-title">重新安排已完成任务</h2><button className="icon-button" type="button" aria-label="关闭" onClick={() => setPendingSchedule(null)}><X size={18} /></button></div><p>这个任务已经完成。移动到新时间后，是否将它重新打开为待办？</p><div className="dialog-actions"><button className="secondary-button" type="button" onClick={() => setPendingSchedule(null)}>取消</button><button className="secondary-button" type="button" onClick={() => { scheduleTask(pendingSchedule.taskId, pendingSchedule.slot, false); setPendingSchedule(null) }}>保持完成</button><button className="primary-button" type="button" onClick={() => { scheduleTask(pendingSchedule.taskId, pendingSchedule.slot, true); setPendingSchedule(null) }}>重新打开并移动</button></div></section></div>}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>

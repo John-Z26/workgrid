@@ -24,6 +24,7 @@ function initialTasks(): Task[] {
       remindedAt: null,
       endReminder: false,
       endRemindedAt: null,
+      tags: [],
     },
     {
       id: makeId(),
@@ -38,6 +39,7 @@ function initialTasks(): Task[] {
       remindedAt: null,
       endReminder: false,
       endRemindedAt: null,
+      tags: [],
     },
     {
       id: makeId(),
@@ -52,6 +54,7 @@ function initialTasks(): Task[] {
       remindedAt: null,
       endReminder: true,
       endRemindedAt: null,
+      tags: [],
     },
     {
       id: makeId(),
@@ -66,6 +69,7 @@ function initialTasks(): Task[] {
       remindedAt: null,
       endReminder: false,
       endRemindedAt: null,
+      tags: [],
     },
   ]
 }
@@ -94,6 +98,7 @@ function migrateTask(value: Partial<Task> & Pick<Task, 'id' | 'title' | 'color' 
     remindedAt: value.remindedAt ?? null,
     endReminder: value.endReminder ?? (value.reminderMinutes != null),
     endRemindedAt: value.endRemindedAt ?? null,
+    tags: Array.isArray(value.tags) ? value.tags.filter((tag): tag is string => typeof tag === 'string').map((tag) => tag.trim()).filter(Boolean).slice(0, 8) : [],
   }
 }
 

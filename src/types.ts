@@ -24,17 +24,19 @@ export interface Task {
   remindedAt: string | null
   endReminder: boolean
   endRemindedAt: string | null
+  tags: string[]
 }
 
 export interface TaskDraft {
   title: string
   color: TaskColor
   duration: number
+  tags: string[]
 }
 
 export interface WorkGridBackup {
   format: 'workgrid-backup'
-  schemaVersion: 4
+  schemaVersion: 5
   appVersion: string
   exportedAt: string
   taskCount: number
