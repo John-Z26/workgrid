@@ -119,7 +119,7 @@ function DroppableDayTrack({ day, guide, children }: { day: Date; guide: DragGui
   const { setNodeRef, isOver } = useDroppable({ id: `day:${day.toISOString()}`, data: { type: 'day', day: day.toISOString() } })
   const visibleGuide = guide?.day === day.toISOString() ? guide : null
   const guideTime = visibleGuide ? format(visibleGuide.slot, 'HH:mm') : null
-  return <div ref={setNodeRef} className={`day-track${isOver ? ' is-over' : ''}`}>{children}{visibleGuide && <div className="drag-time-guide" style={{ top: visibleGuide.top }} data-time={guideTime} aria-hidden="true"><span>{guideTime}</span></div>}</div>
+  return <div ref={setNodeRef} className={`day-track${isOver ? ' is-over' : ''}`} data-day={day.toISOString()}>{children}{visibleGuide && <div className="drag-time-guide" style={{ top: visibleGuide.top }} data-time={guideTime} aria-hidden="true"><span>{guideTime}</span></div>}</div>
 }
 
 function CalendarEvent({ item, duration, batchMode, batchSelected, onOpen, onToggleBatch, onStatus, onResize }: {
@@ -178,6 +178,7 @@ function App() {
   const [batchMode, setBatchMode] = useState(false)
   const [batchSelection, setBatchSelection] = useState<Set<string>>(new Set())
   const [dragGuide, setDragGuide] = useState<DragGuide | null>(null)
+  const [dragPreviewOffsetY, setDragPreviewOffsetY] = useState(0)
   const calendarScrollRef = useRef<HTMLDivElement>(null)
   const deliveredReminderKeys = useRef<Set<string>>(new Set())
   const sensors = useSensors(useSensor(MouseSensor, { activationConstraint: { distance: 4 } }), useSensor(TouchSensor, { activationConstraint: { distance: 4 } }))
@@ -274,6 +275,7 @@ function App() {
   function handleDragStart(event: DragStartEvent) {
     const id = String(event.active.id)
     setDragGuide(null)
+    setDragPreviewOffsetY(0)
     if (id.startsWith('task:')) setDraggingTaskId(id.slice(5))
   }
   function dragSlotFromEvent(event: DragMoveEvent | DragEndEvent) {
@@ -281,19 +283,25 @@ function App() {
     if (target?.type !== 'day' || !target.day || !event.over) return null
     const initialY = dragStartY(event.activatorEvent)
     if (initialY === null) return null
-    return { day: target.day, slot: dropDateFromPosition(new Date(target.day), initialY + event.delta.y, event.over.rect.top, SLOT_HEIGHT, SLOT_MINUTES) }
+    const track = calendarScrollRef.current?.querySelector<HTMLElement>(`.day-track[data-day="${CSS.escape(target.day)}"]`)
+    const trackTop = track?.getBoundingClientRect().top ?? event.over.rect.top
+    const previewTop = event.active.rect.current.translated?.top ?? initialY + event.delta.y
+    return { day: target.day, trackTop, previewTop, slot: dropDateFromPosition(new Date(target.day), previewTop, trackTop, SLOT_HEIGHT, SLOT_MINUTES) }
   }
   function handleDragMove(event: DragMoveEvent) {
     const result = dragSlotFromEvent(event)
-    if (!result) { setDragGuide(null); return }
+    if (!result) { setDragGuide(null); setDragPreviewOffsetY(0); return }
     const minutes = result.slot.getHours() * 60 + result.slot.getMinutes()
-    setDragGuide({ ...result, top: (minutes / SLOT_MINUTES) * SLOT_HEIGHT })
+    const guideTop = (minutes / SLOT_MINUTES) * SLOT_HEIGHT
+    setDragGuide({ day: result.day, slot: result.slot, top: guideTop })
+    setDragPreviewOffsetY(result.trackTop + guideTop - result.previewTop)
   }
   function handleDragEnd(event: DragEndEvent) {
     const taskId = String(event.active.id).replace(/^task:/, '')
     const target = event.over?.data.current as { type?: string; slot?: string; day?: string } | undefined
     setDraggingTaskId(null)
     setDragGuide(null)
+    setDragPreviewOffsetY(0)
     if (!event.over || !target) return
     if (target.type === 'backlog') unscheduleTask(taskId)
     if (target.type === 'slot' && target.slot) scheduleTask(taskId, new Date(target.slot))
@@ -409,7 +417,7 @@ function App() {
   }
 
   const totalMinutes = visibleTasks.reduce((sum, task) => sum + task.duration, 0)
-  return <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragStart={handleDragStart} onDragMove={handleDragMove} onDragEnd={handleDragEnd} onDragCancel={() => { setDraggingTaskId(null); setDragGuide(null) }}>
+  return <DndContext sensors={sensors} collisionDetection={pointerWithin} autoScroll={false} onDragStart={handleDragStart} onDragMove={handleDragMove} onDragEnd={handleDragEnd} onDragCancel={() => { setDraggingTaskId(null); setDragGuide(null); setDragPreviewOffsetY(0) }}>
     <div className="app-shell">
       <header className="topbar"><div className="brand"><span className="brand-mark"><CalendarDays size={18} /></span><span>WorkGrid</span></div><div className="view-switcher" role="group" aria-label="日历视图">{(Object.keys(VIEW_LABELS) as ViewMode[]).map((mode) => <button key={mode} type="button" className={view === mode ? 'is-active' : ''} onClick={() => selectView(mode)}>{VIEW_LABELS[mode]}</button>)}</div><div className="date-controls"><InstallApp /><CloudSync tasks={tasks} setTasks={setTasks} onNotify={notify} /><DataManagement tasks={tasks} canUndoImport={canUndoImport} onImport={importTasks} onUndoImport={undoLastImport} onNotify={notify} /><span className="toolbar-divider" />{view !== 'today' && <><button className="icon-button" type="button" aria-label="上一周期" title="上一周期" onClick={() => setAnchor((date) => moveAnchor(date, view, -1))}><ChevronLeft size={18} /></button><button className="today-button" type="button" onClick={() => setAnchor(new Date())}>今天</button><button className="icon-button" type="button" aria-label="下一周期" title="下一周期" onClick={() => setAnchor((date) => moveAnchor(date, view, 1))}><ChevronRight size={18} /></button></>}</div></header>
       <div className="workspace">
@@ -420,7 +428,7 @@ function App() {
       {pendingSchedule && <div className="modal-backdrop" role="presentation" onMouseDown={() => setPendingSchedule(null)}><section className="edit-dialog reschedule-dialog" role="dialog" aria-modal="true" aria-labelledby="reschedule-title" onMouseDown={(event) => event.stopPropagation()}><div className="dialog-heading"><h2 id="reschedule-title">重新安排已完成任务</h2><button className="icon-button" type="button" aria-label="关闭" onClick={() => setPendingSchedule(null)}><X size={18} /></button></div><p>这个任务已经完成。移动到新时间后，是否将它重新打开为待办？</p><div className="dialog-actions"><button className="secondary-button" type="button" onClick={() => setPendingSchedule(null)}>取消</button><button className="secondary-button" type="button" onClick={() => { scheduleTask(pendingSchedule.taskId, pendingSchedule.slot, false); setPendingSchedule(null) }}>保持完成</button><button className="primary-button" type="button" onClick={() => { scheduleTask(pendingSchedule.taskId, pendingSchedule.slot, true); setPendingSchedule(null) }}>重新打开并移动</button></div></section></div>}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
-    <DragOverlay dropAnimation={null}>{activeTask && <article className={`task-card drag-overlay color-${activeTask.color}`}><GripVertical className="drag-handle" size={15} /><div className="task-copy"><strong>{activeTask.title}</strong><span><Clock3 size={13} />{durationLabel(activeTask.duration)}</span></div></article>}</DragOverlay>
+    <DragOverlay dropAnimation={null}>{activeTask && <article className={`task-card drag-overlay color-${activeTask.color}`} style={{ '--drag-preview-offset-y': `${dragPreviewOffsetY}px` } as React.CSSProperties}><GripVertical className="drag-handle" size={15} /><div className="task-copy"><strong>{activeTask.title}</strong><span><Clock3 size={13} />{durationLabel(activeTask.duration)}</span></div></article>}</DragOverlay>
   </DndContext>
 }
 

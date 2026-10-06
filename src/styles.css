@@ -92,7 +92,7 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
 .task-card.is-dragging, .calendar-event.is-dragging, .month-event.is-dragging { transform: none !important; opacity: 0; box-shadow: none; }
 .drag-handle { flex: 0 0 auto; display: inline-flex; margin-top: 1px; color: color-mix(in srgb, var(--task-color) 70%, var(--text)); cursor: grab; touch-action: none; }
 .drag-handle:active { cursor: grabbing; }
-.drag-overlay { width: min(240px, calc(100vw - 24px)); transform: scale(1.035); box-shadow: 0 16px 34px rgba(31,38,43,.24); cursor: grabbing; pointer-events: none; }
+.drag-overlay { width: min(240px, calc(100vw - 24px)); transform: translateY(var(--drag-preview-offset-y, 0)) scale(1.035); transform-origin: top center; box-shadow: 0 16px 34px rgba(31,38,43,.24); cursor: grabbing; pointer-events: none; }
 .batch-checkbox { width: 18px; height: 18px; flex: 0 0 auto; display: grid; place-items: center; color: #fff; border: 1px solid color-mix(in srgb, var(--task-color) 55%, #89949d); border-radius: 4px; background: rgba(255,255,255,.72); }
 .batch-checkbox.is-checked { background: var(--task-color); border-color: var(--task-color); }
 .task-copy { min-width: 0; flex: 1; }

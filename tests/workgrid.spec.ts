@@ -59,6 +59,15 @@ async function guideSnapshot(page: Page) {
   }))
 }
 
+async function expectPreviewAlignedWithGuide(page: Page) {
+  await expect.poll(async () => {
+    const guideBox = await page.locator('.drag-time-guide').boundingBox()
+    const previewBox = await page.locator('.drag-overlay').boundingBox()
+    if (!guideBox || !previewBox) return Number.POSITIVE_INFINITY
+    return Math.abs(previewBox.y - guideBox.y)
+  }).toBeLessThanOrEqual(3)
+}
+
 function expectValidGuide(snapshot: { time: string; top: number }) {
   expect(snapshot.time).toMatch(/^\d{2}:\d{2}$/)
   const [hours, minutes] = snapshot.time.split(':').map(Number)
@@ -119,6 +128,7 @@ test('desktop drag shows one preview and a guide matching the final start time',
   try {
     await page.mouse.move(target.x, target.y, { steps: 8 })
     snapshot = await guideSnapshot(page)
+    await expectPreviewAlignedWithGuide(page)
     overlayCount = await page.locator('.drag-overlay').count()
     sourceOpacity = await page.locator('.task-card.is-dragging').evaluate((element) => getComputedStyle(element).opacity)
   } finally {
@@ -158,6 +168,7 @@ test('mobile touch drag shows the guide and keeps the page within the viewport',
     })
   }
   snapshot = await guideSnapshot(page)
+  await expectPreviewAlignedWithGuide(page)
   overlayCount = await page.locator('.drag-overlay').count()
 
   expectValidGuide(snapshot!)
@@ -165,6 +176,32 @@ test('mobile touch drag shows the guide and keeps the page within the viewport',
 
   const hasPageOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)
   expect(hasPageOverflow).toBe(false)
+})
+
+test('dragging an existing calendar event keeps its preview on the snapped time guide', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Desktop calendar event regression')
+  const scheduled = new Date()
+  scheduled.setHours(12, 15, 0, 0)
+  await seedTasks(page, [task({ start: scheduled.toISOString(), duration: 45 })])
+  await page.goto('/')
+
+  const target = await dragTarget(page, 1, 32)
+  const event = page.locator('.calendar-event', { hasText: '回归测试任务' })
+  const start = await event.boundingBox()
+  if (!start) throw new Error('Calendar event has no layout box')
+
+  await page.mouse.move(start.x + start.width / 2, start.y + 12)
+  await page.mouse.down()
+  try {
+    await page.mouse.move(target.x, target.y, { steps: 8 })
+    await guideSnapshot(page)
+    await expectPreviewAlignedWithGuide(page)
+  } finally {
+    await page.mouse.up()
+  }
+
+  const guideTime = await page.locator('.calendar-event').getAttribute('aria-label')
+  await expect.poll(() => savedStartTime(page)).toBe(guideTime?.match(/，(\d{2}:\d{2}) 至/)?.[1] ?? null)
 })
 
 test('mobile tap scheduling remains available', async ({ page }, testInfo) => {
