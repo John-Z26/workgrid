@@ -180,8 +180,8 @@ test('mobile touch drag shows the guide and keeps the page within the viewport',
 
 test('dragging an existing calendar event keeps its preview on the snapped time guide', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'Desktop calendar event regression')
-  const scheduled = new Date()
-  scheduled.setHours(12, 15, 0, 0)
+  const shanghaiDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+  const scheduled = new Date(`${shanghaiDate}T12:15:00+08:00`)
   await seedTasks(page, [task({ start: scheduled.toISOString(), duration: 45 })])
   await page.goto('/')
 
