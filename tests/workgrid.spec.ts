@@ -276,12 +276,12 @@ test('cloud login verifies the email code in the current browser', async ({ page
   await page.getByRole('button', { name: '云同步' }).click()
   await page.getByLabel('邮箱').fill('tester@example.com')
   await page.getByRole('button', { name: '发送验证码' }).click()
-  await page.getByLabel('邮箱验证码').fill('123456')
+  await page.getByLabel('邮箱验证码').fill('12345678')
   await page.getByRole('button', { name: '验证并登录' }).click()
 
   await expect(page.getByText('账户与同步状态')).toBeVisible()
   await expect(page.getByText('tester@example.com')).toBeVisible()
-  expect(requestedToken).toBe('123456')
+  expect(requestedToken).toBe('12345678')
 })
 
 test('first cloud sign-in requires a choice before replacing local tasks', async ({ page }, testInfo) => {

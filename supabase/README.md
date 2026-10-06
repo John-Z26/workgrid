@@ -7,7 +7,7 @@
 
 ## Email code template
 
-WorkGrid accepts a six-digit email code in the same browser and keeps the magic link as a fallback. In Authentication > Emails, edit the Magic Link template so the body includes both `{{ .Token }}` and `{{ .ConfirmationURL }}`. For example:
+WorkGrid accepts a 6-to-8-digit email code in the same browser and keeps the magic link as a fallback. In Authentication > Emails, edit the Magic Link template so the body includes both `{{ .Token }}` and `{{ .ConfirmationURL }}`. For example:
 
 ```html
 <h2>登录 WorkGrid</h2>

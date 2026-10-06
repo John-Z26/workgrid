@@ -214,7 +214,7 @@ export default function CloudSync({ tasks, setTasks, onNotify }: CloudSyncProps)
   async function verifyLoginCode(event: React.FormEvent) {
     event.preventDefault()
     const normalizedEmail = email.trim().toLowerCase()
-    if (!normalizedEmail || otp.length !== 6) return
+    if (!normalizedEmail || otp.length < 6 || otp.length > 8) return
     setVerifying(true); setSyncError(null)
     try {
       const { error } = await cloudClient!.auth.verifyOtp({ email: normalizedEmail, token: otp, type: 'email' })
@@ -270,10 +270,10 @@ export default function CloudSync({ tasks, setTasks, onNotify }: CloudSyncProps)
         <div className="dialog-heading"><div className="dialog-title"><span className="dialog-icon"><Cloud size={18} /></span><div><h2 id="cloud-title">云同步</h2><p>{userId ? '账户与同步状态' : '登录后在不同设备使用同一份日程'}</p></div></div><button className="icon-button" type="button" aria-label="关闭" onClick={() => setMenuOpen(false)}><X size={18} /></button></div>
         {!userId ? messageSent ? <form onSubmit={verifyLoginCode}>
           <div className="login-sent"><span><Check size={18} /></span><strong>验证码已发送</strong><p>已发送至 {email.trim().toLowerCase()}，也可以使用邮件中的登录链接。</p></div>
-          <label htmlFor="cloud-otp">邮箱验证码</label><div className="cloud-email-row otp-row"><KeyRound size={17} /><input id="cloud-otp" className="otp-input" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={otp} onChange={(event) => { setOtp(event.target.value.replace(/\D/g, '').slice(0, 6)); setSyncError(null) }} placeholder="000000" /></div>
+          <label htmlFor="cloud-otp">邮箱验证码</label><div className="cloud-email-row otp-row"><KeyRound size={17} /><input id="cloud-otp" className="otp-input" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6,8}" minLength={6} maxLength={8} required value={otp} onChange={(event) => { setOtp(event.target.value.replace(/\D/g, '').slice(0, 8)); setSyncError(null) }} placeholder="输入 6 至 8 位验证码" /></div>
           {syncError && <div className="error-message login-error" role="alert"><CloudOff size={17} />{syncError}</div>}
           <div className="login-resend"><button className="text-button" type="button" disabled={resendSeconds > 0 || submitting} onClick={resendLoginCode}>{resendSeconds > 0 ? `${resendSeconds} 秒后可重新发送` : submitting ? '正在发送...' : '重新发送验证码'}</button><button className="text-button" type="button" onClick={changeLoginEmail}>更换邮箱</button></div>
-          <div className="dialog-actions"><button className="primary-button" type="submit" disabled={verifying || otp.length !== 6}>{verifying ? '正在验证...' : '验证并登录'}</button></div>
+          <div className="dialog-actions"><button className="primary-button" type="submit" disabled={verifying || otp.length < 6 || otp.length > 8}>{verifying ? '正在验证...' : '验证并登录'}</button></div>
         </form> : <form onSubmit={sendLoginCode}>
           <label htmlFor="cloud-email">邮箱</label><div className="cloud-email-row"><Mail size={17} /><input id="cloud-email" type="email" autoComplete="email" required value={email} onChange={(event) => { setEmail(event.target.value); setSyncError(null) }} placeholder="name@example.com" /></div><p className="privacy-note">每个账户的数据相互隔离，不会公开给其他用户。</p>{syncError && <div className="error-message login-error" role="alert"><CloudOff size={17} />{syncError}</div>}<div className="dialog-actions"><button className="primary-button" type="submit" disabled={submitting}>{submitting ? '正在发送...' : '发送验证码'}</button></div>
         </form> : <>
