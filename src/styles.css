@@ -467,6 +467,8 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
   .trash-dialog { padding: 15px; }
   .trash-item { grid-template-columns: minmax(0, 1fr) auto 32px; }
   .trash-item .secondary-button { order: initial; width: auto; white-space: nowrap; }
+  .data-menu { position: fixed; top: 112px; right: 12px; width: min(226px, calc(100vw - 24px)); max-width: calc(100vw - 24px); }
+  .data-menu button strong, .data-menu button small { overflow-wrap: anywhere; }
   .data-dialog .dialog-actions .secondary-button { order: initial; width: auto; }
   .account-summary { grid-template-columns: 1fr; }
   .account-summary > div:nth-child(odd) { border-right: 0; }

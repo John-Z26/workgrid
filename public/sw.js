@@ -1,4 +1,4 @@
-const CACHE_NAME = 'workgrid-shell-v12'
+const CACHE_NAME = 'workgrid-shell-v13'
 const APP_SHELL = ['./', 'manifest.webmanifest', 'workgrid-icon.svg', 'workgrid-192.png', 'workgrid-512.png', 'workgrid-maskable-512.png']
 
 self.addEventListener('install', (event) => {

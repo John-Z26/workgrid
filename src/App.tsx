@@ -49,7 +49,7 @@ function toDateTimeLocal(value: string | null) {
 function fromDateTimeLocal(value: string) {
   if (!value) return null
   const date = new Date(value)
-  date.setMinutes(Math.round(date.getMinutes() / SLOT_MINUTES) * SLOT_MINUTES, 0, 0)
+  date.setSeconds(0, 0)
   return date.toISOString()
 }
 
@@ -198,6 +198,7 @@ function App() {
   const [dragPreviewOffsetY, setDragPreviewOffsetY] = useState(0)
   const calendarScrollRef = useRef<HTMLDivElement>(null)
   const tasksRef = useRef(tasks)
+  const dragGuideRef = useRef<DragGuide | null>(null)
   const deliveredReminderKeys = useRef<Set<string>>(new Set())
   const sensors = useSensors(useSensor(MouseSensor, { activationConstraint: { distance: 4 } }), useSensor(TouchSensor, { activationConstraint: { distance: 4 } }))
 
@@ -332,6 +333,7 @@ function App() {
   }
   function handleDragStart(event: DragStartEvent) {
     const id = String(event.active.id)
+    dragGuideRef.current = null
     setDragGuide(null)
     setDragPreviewOffsetY(0)
     if (id.startsWith('task:')) setDraggingTaskId(id.slice(5))
@@ -348,16 +350,20 @@ function App() {
   }
   function handleDragMove(event: DragMoveEvent) {
     const result = dragSlotFromEvent(event)
-    if (!result) { setDragGuide(null); setDragPreviewOffsetY(0); return }
+    if (!result) { dragGuideRef.current = null; setDragGuide(null); setDragPreviewOffsetY(0); return }
     const minutes = result.slot.getHours() * 60 + result.slot.getMinutes()
     const guideTop = (minutes / SLOT_MINUTES) * SLOT_HEIGHT
-    setDragGuide({ day: result.day, slot: result.slot, top: guideTop })
+    const guide = { day: result.day, slot: result.slot, top: guideTop }
+    dragGuideRef.current = guide
+    setDragGuide(guide)
     setDragPreviewOffsetY(result.trackTop + guideTop - result.previewTop)
   }
   function handleDragEnd(event: DragEndEvent) {
     const taskId = String(event.active.id).replace(/^task:/, '')
     const target = event.over?.data.current as { type?: string; slot?: string; day?: string } | undefined
+    const lastGuide = dragGuideRef.current
     setDraggingTaskId(null)
+    dragGuideRef.current = null
     setDragGuide(null)
     setDragPreviewOffsetY(0)
     if (!event.over || !target) return
@@ -365,7 +371,8 @@ function App() {
     if (target.type === 'slot' && target.slot) scheduleTask(taskId, new Date(target.slot))
     if (target.type === 'day' && target.day) {
       const result = dragSlotFromEvent(event)
-      if (result) scheduleTask(taskId, result.slot)
+      const slot = result?.slot ?? (lastGuide?.day === target.day ? lastGuide.slot : null)
+      if (slot) scheduleTask(taskId, slot)
     }
   }
   function beginEdit(task: Task) {
@@ -517,9 +524,18 @@ function App() {
   }
 
   const totalMinutes = visibleTasks.reduce((sum, task) => sum + task.duration, 0)
-  return <DndContext sensors={sensors} collisionDetection={pointerWithin} autoScroll={false} onDragStart={handleDragStart} onDragMove={handleDragMove} onDragEnd={handleDragEnd} onDragCancel={() => { setDraggingTaskId(null); setDragGuide(null); setDragPreviewOffsetY(0) }}>
+  return <DndContext sensors={sensors} collisionDetection={pointerWithin} autoScroll={false} onDragStart={handleDragStart} onDragMove={handleDragMove} onDragEnd={handleDragEnd} onDragCancel={() => { dragGuideRef.current = null; setDraggingTaskId(null); setDragGuide(null); setDragPreviewOffsetY(0) }}>
     <div className="app-shell">
-      <header className="topbar"><div className="brand"><span className="brand-mark"><CalendarDays size={18} /></span><span>WorkGrid</span></div><div className="view-switcher" role="group" aria-label="日历视图">{(Object.keys(VIEW_LABELS) as ViewMode[]).map((mode) => <button key={mode} type="button" className={view === mode ? 'is-active' : ''} onClick={() => selectView(mode)}>{VIEW_LABELS[mode]}</button>)}</div><div className="date-controls"><InstallApp /><CloudSync tasks={tasks} setTasks={replaceTasksFromExternal} onNotify={notify} /><DataManagement tasks={tasks} canUndoImport={canUndoImport} onImport={importTasks} onUndoImport={undoLastImport} onNotify={notify} /><button className="icon-button trash-button" type="button" aria-label={`回收站，${trashedTasks.length} 项`} title="回收站" onClick={() => setTrashOpen(true)}><Trash2 size={17} />{trashedTasks.length > 0 && <span>{trashedTasks.length > 99 ? '99+' : trashedTasks.length}</span>}</button><span className="toolbar-divider" />{view !== 'today' && <><button className="icon-button" type="button" aria-label="上一周期" title="上一周期" onClick={() => setAnchor((date) => moveAnchor(date, view, -1))}><ChevronLeft size={18} /></button><button className="today-button" type="button" onClick={() => setAnchor(new Date())}>今天</button><button className="icon-button" type="button" aria-label="下一周期" title="下一周期" onClick={() => setAnchor((date) => moveAnchor(date, view, 1))}><ChevronRight size={18} /></button></>}</div></header>
+      <header className="topbar">
+        <div className="brand"><span className="brand-mark"><CalendarDays size={18} /></span><span>WorkGrid</span></div>
+        <div className="view-switcher" role="group" aria-label="日历视图">{(Object.keys(VIEW_LABELS) as ViewMode[]).map((mode) => <button key={mode} type="button" className={view === mode ? 'is-active' : ''} onClick={() => selectView(mode)}>{VIEW_LABELS[mode]}</button>)}</div>
+        <div className="date-controls">
+          <InstallApp /><CloudSync tasks={tasks} setTasks={replaceTasksFromExternal} onNotify={notify} /><DataManagement tasks={tasks} canUndoImport={canUndoImport} onImport={importTasks} onUndoImport={undoLastImport} onNotify={notify} />
+          <button className="icon-button trash-button" type="button" aria-label={`回收站，${trashedTasks.length} 项`} title="回收站" onClick={() => setTrashOpen(true)}><Trash2 size={17} />{trashedTasks.length > 0 && <span>{trashedTasks.length > 99 ? '99+' : trashedTasks.length}</span>}</button>
+          <span className="toolbar-divider" />
+          {view !== 'today' && <><button className="icon-button" type="button" aria-label="上一周期" title="上一周期" onClick={() => setAnchor((date) => moveAnchor(date, view, -1))}><ChevronLeft size={18} /></button><button className="today-button" type="button" aria-label={`回到今天，当前选择 ${format(anchor, view === 'month' ? 'yyyy 年 M 月' : 'M 月 d 日')}`} onClick={() => setAnchor(new Date())}>{isSameDay(anchor, new Date()) ? '今天' : format(anchor, view === 'month' ? 'M 月' : 'M 月 d 日')}</button><button className="icon-button" type="button" aria-label="下一周期" title="下一周期" onClick={() => setAnchor((date) => moveAnchor(date, view, 1))}><ChevronRight size={18} /></button></>}
+        </div>
+      </header>
       <div className="workspace">
         <DroppableBacklog>
           <div className="panel-heading"><div><h1>待安排</h1><span>{unscheduled.length} 个方块</span></div>{selectedTask && !batchMode && <button className="clear-selection" type="button" onClick={() => setSelectedTaskId(null)}><X size={14} />取消选择</button>}</div>

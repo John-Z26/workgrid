@@ -83,6 +83,11 @@ async function savedStartTime(page: Page) {
   }, STORAGE_KEY)
 }
 
+function dateTimeLocal(value: Date) {
+  const pad = (part: number) => String(part).padStart(2, '0')
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}T${pad(value.getHours())}:${pad(value.getMinutes())}`
+}
+
 async function dispatchTouch(target: ReturnType<Page['locator']>, type: 'touchstart' | 'touchmove' | 'touchend', point: { x: number; y: number }) {
   await target.evaluate((element, { eventType, x, y }) => {
     const touch = new Touch({ identifier: 1, target: element, clientX: x, clientY: y, screenX: x, screenY: y })
@@ -152,6 +157,26 @@ test('tasks can be searched, filtered, edited, and batch tagged', async ({ page 
   await page.getByLabel('批量设置开始提醒').selectOption('15')
   await page.getByLabel('批量设置结束提醒').selectOption('on')
   await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]').every((item: { reminderMinutes: number; endReminder: boolean }) => item.reminderMinutes === 15 && item.endReminder), STORAGE_KEY)).toBe(true)
+})
+
+test('mobile data menu and download action stay within the viewport', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile-chromium', 'Mobile layout regression')
+  await seedTasks(page, [])
+  await page.goto('/')
+
+  await page.getByRole('button', { name: '数据管理' }).click()
+  const menu = page.locator('.data-menu')
+  const menuBox = await menu.boundingBox()
+  if (!menuBox) throw new Error('Data menu has no layout box')
+  expect(menuBox.x).toBeGreaterThanOrEqual(0)
+  expect(menuBox.x + menuBox.width).toBeLessThanOrEqual((await page.evaluate(() => window.innerWidth)) + 1)
+  await menu.getByRole('menuitem', { name: /导出备份/ }).click()
+
+  const download = page.getByRole('button', { name: '下载备份' })
+  const downloadBox = await download.boundingBox()
+  if (!downloadBox) throw new Error('Download button has no layout box')
+  expect(downloadBox.x).toBeGreaterThanOrEqual(0)
+  expect(downloadBox.x + downloadBox.width).toBeLessThanOrEqual((await page.evaluate(() => window.innerWidth)) + 1)
 })
 
 test('edit, scheduling, and batch changes can be undone', async ({ page }, testInfo) => {
@@ -318,6 +343,38 @@ test('dragging an existing calendar event keeps its preview on the snapped time 
   await expect.poll(() => savedStartTime(page)).toBe(guideTime?.match(/，(\d{2}:\d{2}) 至/)?.[1] ?? null)
 })
 
+test('editing preserves minute precision and dragging uses the updated time', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Desktop scheduling regression')
+  const initial = new Date()
+  initial.setHours(9, 0, 0, 0)
+  await seedTasks(page, [task({ start: initial.toISOString() })])
+  await page.goto('/')
+
+  await page.locator('.calendar-event', { hasText: '回归测试任务' }).click()
+  const editDialog = page.getByRole('dialog', { name: '编辑工作方块' })
+  const edited = new Date(initial)
+  edited.setHours(10, 12, 0, 0)
+  await editDialog.getByLabel('开始时间').fill(dateTimeLocal(edited))
+  await editDialog.getByRole('button', { name: '保存', exact: true }).click()
+  await expect.poll(() => savedStartTime(page)).toBe('10:12')
+
+  const target = await dragTarget(page, 0, 44)
+  const event = page.locator('.calendar-event', { hasText: '回归测试任务' })
+  const start = await event.boundingBox()
+  if (!start) throw new Error('Calendar event has no layout box')
+  await page.mouse.move(start.x + start.width / 2, start.y + 12)
+  await page.mouse.down()
+  let snapshot: { time: string; top: number }
+  try {
+    await page.mouse.move(target.x, target.y, { steps: 8 })
+    snapshot = await guideSnapshot(page)
+  } finally {
+    await page.mouse.up()
+  }
+  await expect.poll(() => savedStartTime(page)).toBe(snapshot!.time)
+  expect(snapshot!.time).not.toBe('09:00')
+})
+
 test('mobile tap scheduling remains available', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile-chromium', 'Mobile scheduling regression')
   await seedTasks(page, [task()])
@@ -362,6 +419,20 @@ test('views, batch controls, reminders, and legacy data migration still work', a
   await expect(page.getByText('已选择 1 项')).toBeVisible()
   await page.getByLabel('批量修改颜色').selectOption('green')
   await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.color, STORAGE_KEY)).toBe('green')
+})
+
+test('date navigation updates the top-right date label', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Desktop navigation regression')
+  await seedTasks(page, [])
+  await page.goto('/')
+
+  await page.getByRole('button', { name: '周', exact: true }).click()
+  await page.getByRole('button', { name: '下一周期' }).click()
+  const dateButton = page.locator('.today-button')
+  await expect(dateButton).not.toHaveText('今天')
+  await expect(dateButton).toContainText('月')
+  await dateButton.click()
+  await expect(dateButton).toHaveText('今天')
 })
 
 test('cloud login sends an email code with a link fallback', async ({ page }, testInfo) => {
