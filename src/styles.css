@@ -326,6 +326,11 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
 
 .modal-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px; background: rgba(21,26,30,.38); }
 .edit-dialog, .data-dialog { width: min(420px, 100%); max-height: calc(100vh - 32px); overflow: auto; padding: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 22px 60px rgba(20,25,29,.24); }
+.recurrence-panel { position: fixed; z-index: 60; left: 50%; top: 14px; width: min(380px, calc(100vw - 40px)); display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px 9px; padding: 10px 12px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 7px; box-shadow: 0 8px 24px rgba(20,25,29,.14); transform: translateX(-50%); font-size: 12px; }
+.recurrence-panel select, .recurrence-panel input { min-width: 0; height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-subtle); }
+.weekday-picker, .scope-picker { grid-column: 1 / -1; display: flex; gap: 4px; }
+.weekday-picker button, .scope-picker button { min-width: 0; flex: 1; height: 28px; padding: 0 5px; color: var(--muted); border: 1px solid var(--line); border-radius: 5px; background: var(--surface); font-size: 11px; }
+.weekday-picker button.is-active, .scope-picker button.is-active { color: var(--strong-text); border-color: var(--strong); background: var(--strong); }
 .data-dialog { width: min(540px, 100%); }
 .dialog-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .dialog-heading h2 { margin: 0; font-size: 17px; font-weight: 600; }

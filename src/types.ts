@@ -11,6 +11,14 @@ export type TaskColor =
   | 'indigo'
   | 'purple'
 
+export type RecurrenceFrequency = 'daily' | 'weekdays' | 'weekly' | 'monthly'
+
+export interface RecurrenceRule {
+  frequency: RecurrenceFrequency
+  weekdays?: number[]
+  until: string
+}
+
 export interface Task {
   id: string
   title: string
@@ -26,6 +34,8 @@ export interface Task {
   endRemindedAt: string | null
   tags: string[]
   deletedAt: string | null
+  seriesId?: string | null
+  recurrence?: RecurrenceRule | null
 }
 
 export interface TaskDraft {

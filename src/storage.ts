@@ -25,7 +25,9 @@ function initialTasks(): Task[] {
       endReminder: false,
       endRemindedAt: null,
       tags: [],
-      deletedAt: null,
+    deletedAt: null,
+      seriesId: null,
+      recurrence: null,
     },
     {
       id: makeId(),
@@ -41,7 +43,9 @@ function initialTasks(): Task[] {
       endReminder: false,
       endRemindedAt: null,
       tags: [],
-      deletedAt: null,
+    deletedAt: null,
+      seriesId: null,
+      recurrence: null,
     },
     {
       id: makeId(),
@@ -57,7 +61,9 @@ function initialTasks(): Task[] {
       endReminder: true,
       endRemindedAt: null,
       tags: [],
-      deletedAt: null,
+    deletedAt: null,
+      seriesId: null,
+      recurrence: null,
     },
     {
       id: makeId(),
@@ -73,7 +79,9 @@ function initialTasks(): Task[] {
       endReminder: false,
       endRemindedAt: null,
       tags: [],
-      deletedAt: null,
+    deletedAt: null,
+      seriesId: null,
+      recurrence: null,
     },
   ]
 }
@@ -104,6 +112,8 @@ function migrateTask(value: Partial<Task> & Pick<Task, 'id' | 'title' | 'color' 
     endRemindedAt: value.endRemindedAt ?? null,
     tags: Array.isArray(value.tags) ? value.tags.filter((tag): tag is string => typeof tag === 'string').map((tag) => tag.trim()).filter(Boolean).slice(0, 8) : [],
     deletedAt: value.deletedAt ?? null,
+    ...(value.seriesId !== undefined ? { seriesId: value.seriesId ?? null } : {}),
+    ...(value.recurrence !== undefined ? { recurrence: value.recurrence ?? null } : {}),
   }
 }
 

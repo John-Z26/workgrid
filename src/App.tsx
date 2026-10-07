@@ -9,8 +9,9 @@ import CloudSync from './components/CloudSync'
 import InstallApp from './components/InstallApp'
 import { dueEndReminderTasks, dueReminderTasks, reminderLabel } from './reminders'
 import { dropDateFromPosition, parseDurationInput } from './scheduling'
+import { recurrenceDates, recurrenceLabel } from './recurrence'
 import { clearImportRecovery, loadImportRecovery, loadTasks, makeId, saveImportRecovery, saveTasks } from './storage'
-import type { Task, TaskColor, TaskDraft, TaskStatus, ViewMode } from './types'
+import type { RecurrenceFrequency, RecurrenceRule, Task, TaskColor, TaskDraft, TaskStatus, ViewMode } from './types'
 
 const COLORS: Array<{ value: TaskColor; label: string }> = [
   { value: 'red', label: '红色' }, { value: 'orange', label: '橙色' }, { value: 'yellow', label: '黄色' },
@@ -182,6 +183,10 @@ function App() {
   const [editingReminder, setEditingReminder] = useState<number | null>(null)
   const [editingEndReminder, setEditingEndReminder] = useState(false)
   const [editingTags, setEditingTags] = useState('')
+  const [editingFrequency, setEditingFrequency] = useState<RecurrenceFrequency | 'none'>('none')
+  const [editingUntil, setEditingUntil] = useState('')
+  const [editingWeekdays, setEditingWeekdays] = useState<number[]>([])
+  const [editingScope, setEditingScope] = useState<'single' | 'series'>('single')
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [tagFilter, setTagFilter] = useState('all')
@@ -378,6 +383,7 @@ function App() {
   function beginEdit(task: Task) {
     setEditingTaskId(task.id); setEditingDraft({ title: task.title, color: task.color, duration: task.duration, tags: task.tags }); setEditingTags(task.tags.join(', ')); setEditingDuration(String(task.duration))
     setEditingStart(toDateTimeLocal(task.start)); setEditingStatus(task.status); setEditingReminder(task.reminderMinutes); setEditingEndReminder(task.endReminder)
+    setEditingFrequency(task.recurrence?.frequency ?? 'none'); setEditingUntil(task.recurrence?.until?.slice(0, 10) ?? ''); setEditingWeekdays(task.recurrence?.weekdays ?? []); setEditingScope(task.seriesId ? 'series' : 'single')
   }
   async function saveEdit(event: React.FormEvent) {
     event.preventDefault(); if (!editingTaskId || !editingDraft.title.trim()) return
@@ -387,14 +393,28 @@ function App() {
       try { await Notification.requestPermission() } catch { /* 应用内提醒仍然可用 */ }
     }
     const message = (editingReminder !== null || editingEndReminder) && editingStart && (!('Notification' in window) || Notification.permission !== 'granted') ? '修改已保存，将使用应用内提醒' : '修改已保存'
-    commitTaskChange('编辑工作', message, (current) => current.map((task) => {
+    const rule: RecurrenceRule | null = editingFrequency === 'none' || !editingStart ? null : { frequency: editingFrequency, until: editingUntil || editingStart.slice(0, 10), ...(editingFrequency === 'weekly' ? { weekdays: editingWeekdays.length ? editingWeekdays : [new Date(editingStart).getDay()] } : {}) }
+    commitTaskChange(rule ? '设置重复日程' : '编辑工作', rule ? `已设置重复：${recurrenceLabel(rule)}` : message, (current) => {
+      const source = current.find((task) => task.id === editingTaskId)
+      if (!source) return current
+      const baseUpdate = (task: Task, start: string | null, seriesId: string | null, recurrence: RecurrenceRule | null): Task => ({ ...task, ...editingDraft, tags: parseTags(editingTags), duration, title: editingDraft.title.trim(), start, status: editingStatus, completedAt: editingStatus === 'completed' ? task.completedAt ?? new Date().toISOString() : null, reminderMinutes: editingReminder, remindedAt: start !== task.start || editingReminder !== task.reminderMinutes ? null : task.remindedAt, endReminder: editingEndReminder, endRemindedAt: start !== task.start || duration !== task.duration || editingEndReminder !== task.endReminder ? null : task.endRemindedAt, seriesId, recurrence })
+      if (rule && (editingScope === 'series' || !source.seriesId)) {
+        const seriesId = source.seriesId ?? source.id
+        const dates = recurrenceDates(new Date(editingStart), rule)
+        const existing = current.filter((task) => task.seriesId === seriesId || task.id === editingTaskId)
+        const keep = current.filter((task) => !(task.seriesId === seriesId || task.id === editingTaskId))
+        const generated = dates.map((date, index) => {
+          const old = existing[index]
+          return baseUpdate(old ?? { ...source, id: makeId(), createdAt: new Date().toISOString() }, date.toISOString(), seriesId, rule)
+        })
+        return [...generated, ...keep]
+      }
+      return current.map((task) => {
       if (editingStatus === 'in-progress' && task.id !== editingTaskId && task.status === 'in-progress') return { ...task, status: 'todo', completedAt: null }
       if (task.id !== editingTaskId) return task
       const start = fromDateTimeLocal(editingStart)
-      const startReminderChanged = start !== task.start || editingReminder !== task.reminderMinutes
-      const endReminderChanged = start !== task.start || duration !== task.duration || editingEndReminder !== task.endReminder
-      return { ...task, ...editingDraft, tags: parseTags(editingTags), duration, title: editingDraft.title.trim(), start, status: editingStatus, completedAt: editingStatus === 'completed' ? task.completedAt ?? new Date().toISOString() : null, reminderMinutes: editingReminder, remindedAt: startReminderChanged ? null : task.remindedAt, endReminder: editingEndReminder, endRemindedAt: endReminderChanged ? null : task.endRemindedAt }
-    }))
+      return baseUpdate(task, start, rule ? (task.seriesId ?? task.id) : task.seriesId ?? null, rule)
+    }) })
     setEditingTaskId(null)
   }
   function deleteEditingTask() {
@@ -526,6 +546,7 @@ function App() {
   const totalMinutes = visibleTasks.reduce((sum, task) => sum + task.duration, 0)
   return <DndContext sensors={sensors} collisionDetection={pointerWithin} autoScroll={false} onDragStart={handleDragStart} onDragMove={handleDragMove} onDragEnd={handleDragEnd} onDragCancel={() => { dragGuideRef.current = null; setDraggingTaskId(null); setDragGuide(null); setDragPreviewOffsetY(0) }}>
     <div className="app-shell">
+      {editingTaskId && <div className="recurrence-panel" aria-label="重复日程设置"><label htmlFor="edit-frequency">重复</label><select id="edit-frequency" value={editingFrequency} disabled={!editingStart} onChange={(event) => setEditingFrequency(event.target.value as RecurrenceFrequency | 'none')}><option value="none">不重复</option><option value="daily">每天</option><option value="weekdays">工作日</option><option value="weekly">每周</option><option value="monthly">每月</option></select>{editingFrequency !== 'none' && <><label htmlFor="edit-until">重复到</label><input id="edit-until" type="date" min={editingStart.slice(0, 10)} value={editingUntil || editingStart.slice(0, 10)} onChange={(event) => setEditingUntil(event.target.value)} />{editingFrequency === 'weekly' && <div className="weekday-picker" aria-label="重复星期">{['日','一','二','三','四','五','六'].map((label, day) => <button key={day} type="button" className={editingWeekdays.includes(day) ? 'is-active' : ''} onClick={() => setEditingWeekdays((current) => current.includes(day) ? current.filter((value) => value !== day) : [...current, day])}>周{label}</button>)}</div>}{tasks.find((task) => task.id === editingTaskId)?.seriesId && <div className="scope-picker"><button type="button" className={editingScope === 'single' ? 'is-active' : ''} onClick={() => setEditingScope('single')}>仅本次</button><button type="button" className={editingScope === 'series' ? 'is-active' : ''} onClick={() => setEditingScope('series')}>整个系列</button></div>}</>}</div>}
       <header className="topbar">
         <div className="brand"><span className="brand-mark"><CalendarDays size={18} /></span><span>WorkGrid</span></div>
         <div className="view-switcher" role="group" aria-label="日历视图">{(Object.keys(VIEW_LABELS) as ViewMode[]).map((mode) => <button key={mode} type="button" className={view === mode ? 'is-active' : ''} onClick={() => selectView(mode)}>{VIEW_LABELS[mode]}</button>)}</div>

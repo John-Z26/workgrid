@@ -435,6 +435,22 @@ test('date navigation updates the top-right date label', async ({ page }, testIn
   await expect(dateButton).toHaveText('今天')
 })
 
+test('a scheduled task can create a daily recurring series', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
+  const initial = new Date()
+  initial.setHours(9, 0, 0, 0)
+  await seedTasks(page, [task({ start: initial.toISOString() })])
+  await page.goto('/')
+  await page.locator('.calendar-event', { hasText: '回归测试任务' }).click()
+  const dialog = page.getByRole('dialog', { name: '编辑工作方块' })
+  await page.getByLabel('重复', { exact: true }).selectOption('daily')
+  const until = new Date(initial)
+  until.setDate(until.getDate() + 2)
+  await page.getByLabel('重复到').fill(dateTimeLocal(until).slice(0, 10))
+  await dialog.getByRole('button', { name: '保存', exact: true }).click()
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]').filter((item: { recurrence?: unknown }) => item.recurrence).length, STORAGE_KEY)).toBe(3)
+})
+
 test('cloud login sends an email code with a link fallback', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
   await seedTasks(page, [])

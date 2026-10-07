@@ -1,13 +1,13 @@
 {
   "name": "workgrid",
   "private": true,
-  "version": "0.9.2",
+  "version": "0.10.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build --base=/workgrid/",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types backup.test.mjs && node --experimental-strip-types regression.test.mjs && node --experimental-strip-types cloud.test.mjs",
+    "test": "node --experimental-strip-types backup.test.mjs && node --experimental-strip-types regression.test.mjs && node --experimental-strip-types cloud.test.mjs && node --experimental-strip-types recurrence.test.mjs",
     "test:ui": "playwright test"
   },
   "dependencies": {

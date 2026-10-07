@@ -3,7 +3,7 @@ import type { Task, TaskColor, WorkGridBackup } from './types'
 export const BACKUP_FORMAT = 'workgrid-backup'
 export const BACKUP_SCHEMA_VERSION = 6
 export const MAX_BACKUP_BYTES = 5 * 1024 * 1024
-export const APP_VERSION = '0.9.2'
+export const APP_VERSION = '0.10.0'
 
 const COLORS: TaskColor[] = ['red', 'orange', 'yellow', 'green', 'blue', 'indigo', 'purple']
 
@@ -70,6 +70,8 @@ function validateTask(value: unknown, index: number): Task {
   const endRemindedAt = value.endRemindedAt ?? null
   const tags = value.tags ?? []
   const deletedAt = value.deletedAt ?? null
+  const seriesId = value.seriesId ?? null
+  const recurrence = value.recurrence ?? null
   if (status !== 'todo' && status !== 'in-progress' && status !== 'completed') {
     throw new BackupError(`第 ${index + 1} 个工作方块状态无效`)
   }
@@ -94,6 +96,11 @@ function validateTask(value: unknown, index: number): Task {
   if (deletedAt !== null && !isIsoDate(deletedAt)) {
     throw new BackupError(`第 ${index + 1} 个工作方块删除时间无效`)
   }
+  if (seriesId !== null && (typeof seriesId !== 'string' || seriesId.length > 200)) throw new BackupError(`第 ${index + 1} 个工作方块系列编号无效`)
+  if (recurrence !== null) {
+    if (!isRecord(recurrence) || !['daily', 'weekdays', 'weekly', 'monthly'].includes(String(recurrence.frequency)) || !isIsoDate(recurrence.until)) throw new BackupError(`第 ${index + 1} 个工作方块重复规则无效`)
+    if (recurrence.weekdays !== undefined && (!Array.isArray(recurrence.weekdays) || recurrence.weekdays.some((day) => typeof day !== 'number' || day < 0 || day > 6))) throw new BackupError(`第 ${index + 1} 个工作方块重复星期无效`)
+  }
 
   return {
     id,
@@ -110,6 +117,8 @@ function validateTask(value: unknown, index: number): Task {
     endRemindedAt: endRemindedAt as string | null,
     tags: tags.map((tag) => tag.trim()).filter((tag, tagIndex, list) => list.indexOf(tag) === tagIndex),
     deletedAt: deletedAt as string | null,
+    ...(seriesId !== null ? { seriesId: seriesId as string } : {}),
+    ...(recurrence !== null ? { recurrence: recurrence as unknown as Task['recurrence'] } : {}),
   }
 }
 
