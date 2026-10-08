@@ -351,12 +351,14 @@ test('releasing the duration resize handle does not open the edit dialog', async
   await page.goto('/')
 
   const handle = page.getByRole('button', { name: '调整时长' })
-  const box = await handle.boundingBox()
-  if (!box) throw new Error('Resize handle has no layout box')
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-  await page.mouse.down()
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 22)
-  await page.mouse.up()
+  await handle.evaluate((element) => {
+    const box = element.getBoundingClientRect()
+    const clientY = box.y + box.height / 2
+    element.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1, clientY }))
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 1, pointerType: 'mouse', isPrimary: true, buttons: 1, clientY: clientY + 22 }))
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 0, clientY: clientY + 22 }))
+    element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }))
+  })
 
   await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.duration, STORAGE_KEY)).toBe(75)
   await expect(page.getByRole('dialog', { name: '编辑工作方块' })).toHaveCount(0)
