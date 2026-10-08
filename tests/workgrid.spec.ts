@@ -343,6 +343,25 @@ test('dragging an existing calendar event keeps its preview on the snapped time 
   await expect.poll(() => savedStartTime(page)).toBe(guideTime?.match(/，(\d{2}:\d{2}) 至/)?.[1] ?? null)
 })
 
+test('releasing the duration resize handle does not open the edit dialog', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Desktop resize regression')
+  const initial = new Date()
+  initial.setHours(9, 0, 0, 0)
+  await seedTasks(page, [task({ start: initial.toISOString(), duration: 60 })])
+  await page.goto('/')
+
+  const handle = page.getByRole('button', { name: '调整时长' })
+  const box = await handle.boundingBox()
+  if (!box) throw new Error('Resize handle has no layout box')
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 22)
+  await page.mouse.up()
+
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.duration, STORAGE_KEY)).toBe(75)
+  await expect(page.getByRole('dialog', { name: '编辑工作方块' })).toHaveCount(0)
+})
+
 test('editing preserves minute precision and dragging uses the updated time', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'Desktop scheduling regression')
   const initial = new Date()

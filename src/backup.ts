@@ -3,7 +3,7 @@ import type { Task, TaskColor, WorkGridBackup } from './types'
 export const BACKUP_FORMAT = 'workgrid-backup'
 export const BACKUP_SCHEMA_VERSION = 6
 export const MAX_BACKUP_BYTES = 5 * 1024 * 1024
-export const APP_VERSION = '0.10.0'
+export const APP_VERSION = '0.10.1'
 
 const COLORS: TaskColor[] = ['red', 'orange', 'yellow', 'green', 'blue', 'indigo', 'purple']
 
