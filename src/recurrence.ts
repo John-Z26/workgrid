@@ -1,4 +1,4 @@
-import { addDays, addMonths, endOfMonth, isAfter, startOfDay } from 'date-fns'
+import { addDays, addMonths, endOfMonth, isAfter, parseISO, startOfDay } from 'date-fns'
 import type { RecurrenceFrequency, RecurrenceRule } from './types'
 
 export function recurrenceLabel(rule: RecurrenceRule | null | undefined) {
@@ -11,7 +11,7 @@ export function recurrenceLabel(rule: RecurrenceRule | null | undefined) {
 
 export function recurrenceDates(start: Date, rule: RecurrenceRule, limit = 366): Date[] {
   const dates: Date[] = []
-  const until = startOfDay(new Date(rule.until))
+  const until = startOfDay(parseISO(rule.until.slice(0, 10)))
   if (rule.frequency === 'monthly') {
     let month = new Date(start.getFullYear(), start.getMonth(), 1, start.getHours(), start.getMinutes(), start.getSeconds(), start.getMilliseconds())
     while (dates.length < limit && !isAfter(startOfDay(month), until)) {
