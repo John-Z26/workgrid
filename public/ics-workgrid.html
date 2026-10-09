@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="description" content="把学校 .ics 课表转换成 WorkGrid 备份文件，一键导入 WorkGrid（zhoubx634.github.io/workgrid）">
 <title>ICS 课表转 WorkGrid 导入助手</title>
+<script src="https://cdn.jsdelivr.net/npm/rrule@2.8.1/dist/es5/rrule.min.js"></script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2320262b'/%3E%3Crect x='12' y='12' width='16' height='16' rx='4' fill='%238ea8ff'/%3E%3Crect x='36' y='12' width='16' height='16' rx='4' fill='%23f5c25c'/%3E%3Crect x='12' y='36' width='16' height='16' rx='4' fill='%234ade80'/%3E%3Crect x='36' y='36' width='16' height='16' rx='4' fill='%23f87171'/%3E%3C/svg%3E">
 <style>
 :root{
@@ -214,7 +215,7 @@ footer b{color:var(--text)}
       <aside class="settings">
         <h3>转换设置</h3>
         <div class="field">
-          <label for="rangeWeeks">重复课表展开到</label>
+          <label for="rangeWeeks">导入窗口（今天起）</label>
           <select id="rangeWeeks">
             <option value="28">未来 4 周（28 天）</option>
             <option value="42" selected>未来 6 周（42 天）</option>
@@ -300,7 +301,9 @@ footer b{color:var(--text)}
 
   <footer>
     <b>隐私与机制</b>：本工具为纯前端，所有解析、转换都在当前页面本地完成，不上传任何数据；它只生成 WorkGrid 官方支持的备份 JSON，不会改动 WorkGrid 本身。<br>
-    <b>已知限制</b>：重复课表默认展开为独立任务（每节一卡，便于单独调整）；WorkGrid 的「合并导入」会按任务编号自动跳过已存在的重复项，重复导入同一课表不会产生重复卡片。
+    <b>展开窗口</b>：重复课表只展开「今天起未来 N 天」窗口内的课程（窗口外的不生成，学期中途导入也只会得到未来课程）。<br>
+    <b>重复导入</b>：同一课表重复导入时，每个任务由「来源 UID + 发生时刻」确定性生成相同的编号与创建时间，WorkGrid 的合并导入会按编号自动跳过已存在的项，不会产生重复卡片。<br>
+    <b>依赖</b>：重复规则展开使用 jsDelivr CDN 加载的成熟库 rrule.js，需联网使用；课表数据仍完全在本地处理。
   </footer>
 
 </div>
@@ -435,75 +438,74 @@ function durationToMs(v) {
   return (+(m[1] || 0)) * 864e5 + (+(m[2] || 0)) * 36e5 + (+(m[3] || 0)) * 6e4 + (+(m[4] || 0)) * 1e3;
 }
 /* JS: PARSER_END */
-/* ===== RRULE 重复规则展开 ===== */
-// 支持 DAILY / WEEKLY(+BYDAY) / MONTHLY，支持 INTERVAL / COUNT / UNTIL / EXDATE
-// 复杂规则（YEARLY、BYMONTH 等）不展开 —— 功能边界，已在界面提示
-const DAY_MS = 864e5;
-const WD_NAME = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
-
-function expandRRULE(rrule, dtstartMs, maxDays) {
-  if (!rrule) return [dtstartMs];
-  const parts = {};
-  for (const p of rrule.split(";")) {
-    const i = p.indexOf("=");
-    if (i > 0) parts[p.slice(0, i).toUpperCase()] = p.slice(i + 1);
+/* ===== 重复规则展开（rrule.js 成熟库 + 当前时间窗口） ===== */
+// 窗口语义：rangeStart（今天 00:00）到 rangeEnd（今天+maxDays 天 23:59:59），只生成窗口内 occurrence
+function expandOccurrences(dtstartMs, rruleStr, rangeStartMs, rangeEndMs) {
+  const inWindow = ms => ms >= rangeStartMs && ms <= rangeEndMs;
+  if (!rruleStr) return inWindow(dtstartMs) ? [dtstartMs] : [];
+  if (typeof RRule === "undefined") {
+    // 库未加载（如离线打开）：降级为单次事件，不静默出错
+    return inWindow(dtstartMs) ? [dtstartMs] : [];
   }
-  const freq = parts.FREQ || "DAILY";
-  const interval = Math.max(1, +(parts.INTERVAL || 1));
-  const count = parts.COUNT ? +parts.COUNT : Infinity;
-  const untilMs = parts.UNTIL ? dtToMs(parseICSDate(parts.UNTIL, {})) : null;
-  const byDay = (parts.BYDAY || "").split(",").filter(Boolean)
-    .map(s => WD_NAME[s.slice(-2)]).filter(n => n !== undefined);
-  const horizon = dtstartMs + maxDays * DAY_MS; // 展开到 dtstart + maxDays（不含边界当天）
-  const start = new Date(dtstartMs);
-  const out = [new Date(dtstartMs)];
-  let cur = new Date(dtstartMs);
-  let guard = 0;
-
-  const beyond = ms => (untilMs !== null && ms > untilMs) || ms >= horizon;
-
-  while (guard++ < 50000) {
-    if (out.length >= count) break;
-
-    if (byDay.length && freq === "WEEKLY") {
-      // cur 是本周锚点：先生成 BYDAY 指定的每一天（保留原事件钟点），再跳到下一周
-      const weekStart = new Date(cur.getTime() - cur.getDay() * DAY_MS);
-      if (beyond(weekStart.getTime())) break;
-      for (const wd of byDay) {
-        if (out.length >= count) break;
-        const cand = new Date(weekStart.getTime() + wd * DAY_MS);
-        cand.setHours(start.getHours(), start.getMinutes(), start.getSeconds(), 0);
-        if (cand.getTime() < dtstartMs || beyond(cand.getTime())) continue;
-        out.push(cand);
-      }
-      cur = new Date(weekStart.getTime() + 7 * DAY_MS);
-      continue;
-    }
-
-    if (freq === "DAILY") cur = new Date(cur.getTime() + DAY_MS * interval);
-    else if (freq === "WEEKLY") cur = new Date(cur.getTime() + 7 * DAY_MS * interval);
-    else if (freq === "MONTHLY") {
-      cur = new Date(cur.getFullYear(), cur.getMonth() + interval, cur.getDate(),
-        cur.getHours(), cur.getMinutes(), cur.getSeconds());
-    }
-    else if (freq === "YEARLY") {
-      cur = new Date(cur.getFullYear() + interval, cur.getMonth(), cur.getDate(),
-        cur.getHours(), cur.getMinutes(), cur.getSeconds());
-    }
-    else break; // 无法识别的 FREQ：只保留首次
-    if (beyond(cur.getTime())) break;
-    out.push(new Date(cur));
+  let rule;
+  try {
+    rule = new RRule({ dtstart: new Date(dtstartMs), ...RRule.parseString(rruleStr) });
+  } catch (e) {
+    return inWindow(dtstartMs) ? [dtstartMs] : [];
   }
-
-  const uniq = [...new Map(out.map(d => [d.getTime(), d])).values()]
-    .sort((a, b) => a - b)
-    .slice(0, count === Infinity ? undefined : count)
+  // between(after, before, inc=true)：含边界；rrule.js 正确处理 COUNT/INTERVAL/BYDAY/WKST/UNTIL/DST
+  return rule.between(new Date(rangeStartMs), new Date(rangeEndMs), true)
     .map(d => d.getTime());
-  return uniq;
+}
+
+// 多值 EXDATE：每行按逗号拆分（EXDATE;TZID=..:20260101,20260102），多行合并；
+// 每个值按该属性自己的 TZID 转成真实时刻（毫秒），与 occurrence 做精确时刻比较
+function parseExdates(lines) {
+  const set = new Set();
+  for (const l of lines) {
+    if (l.name !== "EXDATE") continue;
+    for (const v of l.value.split(",")) {
+      const dt = parseICSDate(v, l.params);
+      if (dt) set.add(dtToMs(dt));
+    }
+  }
+  return set;
+}
+
+// 收集所有带 RECURRENCE-ID 的覆盖时刻：Map<uid, Set<ms>>，供主序列展开时剔除被覆盖的 occurrence
+function collectRecIdMs(events) {
+  const map = new Map();
+  for (const ev of events) {
+    const ls = ev.map(parseLine).filter(Boolean);
+    const uidL = ls.find(l => l.name === "UID");
+    const recL = ls.find(l => l.name === "RECURRENCE-ID");
+    if (!uidL || !recL) continue;
+    const dt = parseICSDate(recL.value, recL.params);
+    if (!dt) continue;
+    if (!map.has(uidL.value)) map.set(uidL.value, new Set());
+    map.get(uidL.value).add(dtToMs(dt));
+  }
+  return map;
+}
+
+// 确定性 64 位哈希（FNV-1a 双通道）：同源同刻 → 同 id，重复导入可被 WorkGrid 合并去重
+function stableHash(str) {
+  let h1 = 0x811c9dc5, h2 = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = (Math.imul(h2 ^ c, 0x01000193) ^ ((c << 7) | (c >>> 25))) >>> 0;
+  }
+  return (h1.toString(16) + h2.toString(16)).slice(0, 16);
+}
+
+// HTML 转义（文本与属性共用；转义双引号可防止从属性逃逸注入事件处理器）
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 /* ===== 转成 WorkGrid 工作方块 ===== */
-function eventToBlocks(ev, opts) {
+function eventToBlocks(ev, opts, recIdMap) {
   const lines = ev.map(parseLine).filter(Boolean);
   const byName = {};
   for (const l of lines) (byName[l.name] = byName[l.name] || []).push(l);
@@ -515,10 +517,12 @@ function eventToBlocks(ev, opts) {
   if (!summary || !dtstart || (status && status.value.toUpperCase() === "CANCELLED")) return [];
 
   const uid = (get("UID") && get("UID").value) || "";
+  const recLine = get("RECURRENCE-ID");
   const s = parseICSDate(dtstart.value, dtstart.params);
   if (!s) return [];
   const sMs = dtToMs(s);
   const allDay = s.kind === "date";
+  const recMs = recLine ? (() => { const r = parseICSDate(recLine.value, recLine.params); return r ? dtToMs(r) : null; })() : null;
 
   let eMs = null;
   const dtend = get("DTEND");
@@ -532,10 +536,21 @@ function eventToBlocks(ev, opts) {
     ? clamp(Math.round(opts.allDayDur), 1, 720)
     : clamp(Math.round((eMs - sMs) / 60000), 1, 720);
 
-  const occurrences = expandRRULE((get("RRULE") && get("RRULE").value) || null, sMs, opts.maxDays);
-  const exdates = new Set(
-    (byName["EXDATE"] || []).map(l => new Date(dtToMs(parseICSDate(l.value, l.params))).toDateString())
-  );
+  // occurrence：RECURRENCE-ID 覆盖事件按自己的 DTSTART（新时间）单次输出；否则在【今天起 N 天】窗口内展开主序列
+  let occurrences;
+  if (recMs !== null) {
+    occurrences = (sMs >= opts.rangeStart && sMs <= opts.rangeEnd) ? [sMs] : [];
+  } else {
+    occurrences = expandOccurrences(sMs, (get("RRULE") && get("RRULE").value) || null, opts.rangeStart, opts.rangeEnd);
+    // 被同 UID 的 RECURRENCE-ID 覆盖的时刻剔除（不重复生成）
+    if (recIdMap && uid) {
+      const covered = recIdMap.get(uid);
+      if (covered && covered.size) occurrences = occurrences.filter(ms => !covered.has(ms));
+    }
+    // EXDATE 剔除：多值按逗号拆分、多行合并，按精确时刻（毫秒）比较
+    const exdates = parseExdates(lines);
+    if (exdates.size) occurrences = occurrences.filter(ms => !exdates.has(ms));
+  }
 
   // 标题解码 + 截断 60 字；标签来自 CATEGORIES（≤8 条、每条 ≤24 字）
   const enc = get("SUMMARY").params.ENCODING;
@@ -568,30 +583,38 @@ function eventToBlocks(ev, opts) {
 
   const colorKey = opts.colorMode === "category" ? (catsRaw || title) : title;
 
-  return occurrences
-    .filter(ms => !exdates.has(new Date(ms).toDateString()))
-    .map((ms, i) => {
-      const d = new Date(ms);
-      if (allDay) d.setHours(opts.allDayH, opts.allDayM, 0, 0);
-      return {
-        id: `ics-${uid || "ev"}-${i}`.slice(0, 200),
-        title,
-        color: colorFor(colorKey),
-        duration,
-        start: d.toISOString(),
-        createdAt: new Date().toISOString(),
-        status: "todo",
-        completedAt: null,
-        reminderMinutes: null,
-        remindedAt: null,
-        endReminder: false,
-        endRemindedAt: null,
-        tags,
-        deletedAt: null,
-        seriesId: uid ? `ics-${uid}`.slice(0, 200) : null,
-        recurrence: null,
-      };
-    });
+  // 确定性 createdAt：优先用 ICS 原始创建时间 DTSTAMP，否则用事件开始时间。
+  // 同一课表两次导入 → 每个任务 id 与 createdAt 完全相同 → WorkGrid 合并导入按 id 去重，零新增。
+  const dtstamp = get("DTSTAMP");
+  let createdBase = sMs;
+  if (dtstamp) { const d2 = parseICSDate(dtstamp.value, dtstamp.params); if (d2) createdBase = dtToMs(d2); }
+
+  const seriesId = uid ? `ics-${stableHash(uid)}` : null;
+
+  return occurrences.map(ms => {
+    const d = new Date(ms);
+    if (allDay) d.setHours(opts.allDayH, opts.allDayM, 0, 0);
+    // 确定性 id：UID（无 UID 用开始时刻）+ 具体时刻 + 覆盖标记 → 64 位哈希，无碰撞、不受窗口大小影响
+    const idKey = `${uid || "no-uid"}|${recMs !== null ? "R:" + recMs : ms}`;
+    return {
+      id: `ics-${stableHash(idKey)}`,
+      title,
+      color: colorFor(colorKey),
+      duration,
+      start: d.toISOString(),
+      createdAt: new Date(createdBase).toISOString(),
+      status: "todo",
+      completedAt: null,
+      reminderMinutes: null,
+      remindedAt: null,
+      endReminder: false,
+      endRemindedAt: null,
+      tags,
+      deletedAt: null,
+      seriesId,
+      recurrence: null,
+    };
+  });
 }
 
 // 稳定取色：同课同名 → 同色
@@ -613,12 +636,15 @@ function buildBackup(blocks) {
   };
 }
 
-// 生成前自检：过滤掉不符合 WorkGrid 校验规则的方块
+// 生成前自检：过滤掉不符合 WorkGrid 校验规则的方块；id 集合必须唯一（WorkGrid 会拒绝含重复 ID 的整个备份）
 function validateBlocks(blocks) {
   const bad = [];
+  const seenIds = new Set();
   const ok = blocks.filter(b => {
     const problems = [];
     if (typeof b.id !== "string" || b.id.length < 1 || b.id.length > 200) problems.push("id");
+    else if (seenIds.has(b.id)) problems.push("id 重复");
+    if (typeof b.id === "string") seenIds.add(b.id);
     if (typeof b.title !== "string" || b.title.trim().length < 1 || b.title.length > 60) problems.push("title");
     if (!COLORS.includes(b.color)) problems.push("color");
     if (!Number.isInteger(b.duration) || b.duration < 1 || b.duration > 720) problems.push("duration");
@@ -641,8 +667,14 @@ const COLOR_HEX = {
 
 function getOpts() {
   const t = $("#allDayTime").value.split(":");
+  const maxDays = +$("#rangeWeeks").value;
+  const now = new Date();
+  // 窗口起点 = 今天 00:00（本地时区），终点 = 今天 + maxDays 天 23:59:59
+  const rangeStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   return {
-    maxDays: +$("#rangeWeeks").value,
+    maxDays,
+    rangeStart,
+    rangeEnd: rangeStart + maxDays * 864e5 - 1,
     allDayH: +t[0], allDayM: +(t[1] || 0),
     allDayDur: clamp(+$("#allDayDur").value || 480, 1, 720),
     colorMode: $("#colorMode").value,
@@ -655,7 +687,8 @@ function getOpts() {
 function buildBlocks() {
   const events = extractEvents(state.rawLines);
   const opts = getOpts();
-  state.blocks = events.flatMap(ev => eventToBlocks(ev, opts));
+  const recIdMap = collectRecIdMs(events);
+  state.blocks = events.flatMap(ev => eventToBlocks(ev, opts, recIdMap));
   state.selected = new Set(state.blocks.map((_, i) => i));
   renderTable();
 }
@@ -701,12 +734,12 @@ function renderTable() {
       const sel = state.selected.has(i);
       tr.innerHTML = `
         <td><input type="checkbox" class="cb" data-idx="${i}" ${sel ? "checked" : ""}></td>
-        <td title="${b.title}">${esc(b.title)}${b.seriesId && (seriesCount[b.seriesId] || 0) > 1
-          ? `<span class="repeat-tag" title="同一系列共 ${seriesCount[b.seriesId]} 节"> 系列×${seriesCount[b.seriesId]}</span>` : ""}</td>
+        <td title="${esc(b.title)}">${esc(b.title)}${b.seriesId && (seriesCount[b.seriesId] || 0) > 1
+          ? `<span class="repeat-tag" title="同一系列共 ${esc(seriesCount[b.seriesId])} 节"> 系列×${esc(seriesCount[b.seriesId])}</span>` : ""}</td>
         <td>${fmtDateTime(Date.parse(b.start))}</td>
         <td>${fmtDuration(b.duration)}</td>
         <td>${b.seriesId && (seriesCount[b.seriesId] || 0) > 1 ? `<span class="repeat-tag">重复</span>` : "—"}</td>
-        <td><span class="color-dot" style="background:${COLOR_HEX[b.color]}" title="${COLOR_LABEL[b.color]}"></span></td>
+        <td><span class="color-dot" style="background:${COLOR_HEX[b.color]}" title="${esc(COLOR_LABEL[b.color])}"></span></td>
         <td>${b.tags.map(t => `<span class="tag">${esc(t)}</span>`).join("")}</td>`;
       frag.appendChild(tr);
     }
@@ -714,10 +747,6 @@ function renderTable() {
     tbody.appendChild(frag);
   }
   updateStats();
-}
-
-function esc(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 function updateStats() {
